@@ -242,7 +242,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
             // Try creating a kernel
             await initializeInteractiveOrNotebookTelemetryBasedOnUserAction(this.owner, metadata);
 
-            const onStartKernel = (action: KernelAction, k: IKernel) => {
+            const onKernelAction = (action: KernelAction, k: IKernel) => {
                 if (action !== 'start' && action !== 'restart') {
                     return;
                 }
@@ -267,7 +267,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
                 new DisplayOptions(false),
                 this.internalDisposables,
                 'jupyterExtension',
-                onStartKernel
+                onKernelAction
             );
             this.currentKernelInfo.controller = this.controllerRegistration.registered.find(
                 (item) => item.id === kernel.controller.id
