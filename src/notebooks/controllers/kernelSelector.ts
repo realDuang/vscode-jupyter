@@ -14,7 +14,7 @@ export async function selectKernel(
     notebookEditorProvider: INotebookEditorProvider | undefined,
     commandManager: ICommandManager
 ): Promise<boolean> {
-    const notebookEditor = notebookEditorProvider?.findNotebookEditor(resource);
+    const notebookEditor = await notebookEditorProvider?.findNotebookEditor(resource);
     if (notebookEditor) {
         return commandManager.executeCommand('notebook.selectKernel', {
             notebookEditor

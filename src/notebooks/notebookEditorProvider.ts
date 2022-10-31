@@ -29,7 +29,7 @@ export class NotebookEditorProvider implements INotebookEditorProvider {
         this.providers.add(provider);
     }
 
-    findNotebookEditor(resource: Resource) {
+    async findNotebookEditor(resource: Resource): Promise<NotebookEditor | undefined> {
         const key = resource ? getComparisonKey(resource, true) : 'false';
         const notebook =
             getResourceType(resource) === 'notebook'
@@ -45,7 +45,7 @@ export class NotebookEditorProvider implements INotebookEditorProvider {
         }
 
         for (let provider of this.providers) {
-            const editor = provider.findNotebookEditor(resource);
+            const editor = await provider.findNotebookEditor(resource);
 
             if (editor) {
                 return editor;
@@ -53,9 +53,9 @@ export class NotebookEditorProvider implements INotebookEditorProvider {
         }
     }
 
-    get activeNotebookEditor(): NotebookEditor | undefined {
+    get activeNotebookEditor(): Promise<NotebookEditor | undefined> {
         return (
-            this.findNotebookEditor(window.activeNotebookEditor?.notebook.uri) ||
+            Promise.resolve(window.activeNotebookEditor) ||
             this.findNotebookEditor(window.activeTextEditor?.document.uri)
         );
     }

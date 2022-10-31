@@ -12,7 +12,8 @@ import {
     NotebookEditor,
     Uri,
     ViewColumn,
-    window
+    window,
+    workspace
 } from 'vscode';
 
 import { IApplicationShell, ICommandManager, IWorkspaceService } from '../platform/common/application/types';
@@ -87,6 +88,7 @@ export class InteractiveWindowProvider
     private lastActiveInteractiveWindow: IInteractiveWindow | undefined;
     private pendingCreations: Promise<void> | undefined;
     private _windows: InteractiveWindow[] = [];
+    private restoringWindowsTask: Promise<void>;
 
     constructor(
         @inject(IServiceContainer) private serviceContainer: IServiceContainer,
@@ -105,10 +107,10 @@ export class InteractiveWindowProvider
         asyncRegistry.push(this);
 
         this.notebookEditorProvider.registerEmbedNotebookProvider(this);
-        this.restoreWindows();
+        this.restoringWindowsTask = this.restoreWindows();
     }
 
-    private restoreWindows() {
+    private async restoreWindows(): Promise<void> {
         // VS Code controls if interactive windows are restored.
         const interactiveWindowMapping = new Map<string, InteractiveTab>();
         window.tabGroups.all.forEach((group) => {
@@ -119,24 +121,25 @@ export class InteractiveWindowProvider
             });
         });
 
-        this.workspaceMemento.get(InteractiveWindowCacheKey, [] as IInteractiveWindowCache[]).forEach((iw) => {
-            if (!iw.uriString || !interactiveWindowMapping.get(iw.uriString)) {
+        const iwTabs = this.workspaceMemento.get(InteractiveWindowCacheKey, [] as IInteractiveWindowCache[]);
+        for (const iwTab of iwTabs) {
+            if (!iwTab.uriString) {
                 return;
             }
 
-            const tab = interactiveWindowMapping.get(iw.uriString);
-
+            const tab = interactiveWindowMapping.get(iwTab.uriString);
             if (!tab) {
                 return;
             }
 
+            const notebookDocument = await workspace.openNotebookDocument(tab.input.uri);
             const result = new InteractiveWindow(
                 this.serviceContainer,
-                iw.owner !== undefined ? Uri.from(iw.owner) : undefined,
-                iw.mode,
+                iwTab.owner !== undefined ? Uri.from(iwTab.owner) : undefined,
+                iwTab.mode,
                 undefined,
-                tab,
-                Uri.parse(iw.inputBoxUriString)
+                notebookDocument,
+                Uri.parse(iwTab.inputBoxUriString)
             );
             this._windows.push(result);
 
@@ -144,7 +147,7 @@ export class InteractiveWindowProvider
             this.disposables.push(result);
             this.disposables.push(handler);
             this.disposables.push(result.onDidChangeViewState(this.raiseOnDidChangeActiveInteractiveWindow.bind(this)));
-        });
+        }
 
         this._updateWindowCache();
     }
@@ -155,6 +158,8 @@ export class InteractiveWindowProvider
             // The commands the like should be disabled.
             throw new Error('Workspace not trusted');
         }
+        await this.restoringWindowsTask;
+
         // Ask for a configuration change if appropriate
         const mode = await this.getInteractiveMode(resource);
 
@@ -206,13 +211,19 @@ export class InteractiveWindowProvider
             );
 
             const commandManager = this.serviceContainer.get<ICommandManager>(ICommandManager);
-            const [inputUri, editor] = await this.createEditor(preferredController, resource, mode, commandManager);
+            const { notebookUri, inputUri } = await this.createEditor(
+                preferredController,
+                resource,
+                mode,
+                commandManager
+            );
+            const notebookDocument = await workspace.openNotebookDocument(notebookUri);
             const result = new InteractiveWindow(
                 this.serviceContainer,
                 resource,
                 mode,
                 preferredController,
-                editor,
+                notebookDocument,
                 inputUri
             );
             this._windows.push(result);
@@ -239,11 +250,12 @@ export class InteractiveWindowProvider
         resource: Resource,
         mode: InteractiveWindowMode,
         commandManager: ICommandManager
-    ): Promise<[Uri, NotebookEditor]> {
+    ): Promise<INativeInteractiveWindow> {
         const controllerId = preferredController ? `${JVSC_EXTENSION_ID}/${preferredController.id}` : undefined;
         const hasOwningFile = resource !== undefined;
         let viewColumn = this.getInteractiveViewColumn(resource);
-        const { inputUri, notebookEditor } = (await commandManager.executeCommand(
+
+        const nativeInteractiveWindow = (await commandManager.executeCommand(
             'interactive.open',
             // Keep focus on the owning file if there is one
             { viewColumn: viewColumn, preserveFocus: hasOwningFile },
@@ -251,12 +263,12 @@ export class InteractiveWindowProvider
             controllerId,
             resource && mode === 'perFile' ? getInteractiveWindowTitle(resource) : undefined
         )) as unknown as INativeInteractiveWindow;
-        if (!notebookEditor) {
+        if (!nativeInteractiveWindow.notebookEditor) {
             // This means VS Code failed to create an interactive window.
             // This should never happen.
             throw new Error('Failed to request creation of interactive window from VS Code.');
         }
-        return [inputUri, notebookEditor];
+        return nativeInteractiveWindow;
     }
 
     private getInteractiveViewColumn(resource: Resource): ViewColumn {
@@ -317,7 +329,7 @@ export class InteractiveWindowProvider
                     owner: iw.owner,
                     mode: iw.mode,
                     uriString: iw.notebookUri.toString(),
-                    inputBoxUriString: iw.inputUri.toString()
+                    inputBoxUriString: iw.inputBoxUri.toString()
                 } as IInteractiveWindowCache)
         );
         this.workspaceMemento.update(InteractiveWindowCacheKey, windowCache).then(noop, noop);
@@ -385,19 +397,23 @@ export class InteractiveWindowProvider
         }
     }
 
-    findNotebookEditor(resource: Resource): NotebookEditor | undefined {
-        const targetInteractiveNotebookEditor =
-            resource && getResourceType(resource) === 'interactive' ? this.get(resource)?.notebookEditor : undefined;
-        const activeInteractiveNotebookEditor =
-            getResourceType(resource) === 'interactive'
-                ? this.getActiveOrAssociatedInteractiveWindow()?.notebookEditor
-                : undefined;
+    async findNotebookEditor(resource: Resource): Promise<NotebookEditor | undefined> {
+        const targetInteractiveWindow =
+            resource && getResourceType(resource) === 'interactive' ? this.get(resource) : undefined;
+        if (targetInteractiveWindow) {
+            return await targetInteractiveWindow.showEditor();
+        }
 
-        return targetInteractiveNotebookEditor || activeInteractiveNotebookEditor;
+        const activeInteractiveWindow =
+            getResourceType(resource) === 'interactive' ? this.getActiveOrAssociatedInteractiveWindow() : undefined;
+
+        if (activeInteractiveWindow) {
+            return await activeInteractiveWindow?.showEditor();
+        }
     }
 
     findAssociatedNotebookDocument(uri: Uri): NotebookDocument | undefined {
-        const interactiveWindow = this.windows.find((w) => w.inputUri?.toString() === uri.toString());
+        const interactiveWindow = this.windows.find((w) => w.inputBoxUri?.toString() === uri.toString());
         let notebook = interactiveWindow?.notebookDocument;
         return notebook;
     }

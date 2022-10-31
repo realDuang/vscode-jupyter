@@ -50,7 +50,7 @@ export class KernelConnector {
     ): Promise<{ controller: IKernelController; metadata: KernelConnectionMetadata } | undefined> {
         const commandManager = serviceContainer.get<ICommandManager>(ICommandManager);
         const notebookEditorProvider = serviceContainer.get<INotebookEditorProvider>(INotebookEditorProvider);
-        const editor = notebookEditorProvider.findNotebookEditor(resource);
+        const editor = await notebookEditorProvider.findNotebookEditor(resource);
 
         // Listen for selection change events (may not fire if user cancels)
         const controllerManager = serviceContainer.get<IControllerSelection>(IControllerSelection);

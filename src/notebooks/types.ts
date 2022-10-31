@@ -27,15 +27,15 @@ export interface INotebookCompletionProvider {
 }
 
 export interface IEmbedNotebookEditorProvider {
-    findNotebookEditor(resource: Resource): NotebookEditor | undefined;
+    findNotebookEditor(resource: Resource): Promise<NotebookEditor | undefined>;
     findAssociatedNotebookDocument(uri: Uri): NotebookDocument | undefined;
 }
 
 // For native editing, the provider acts like the IDocumentManager for normal docs
 export const INotebookEditorProvider = Symbol('INotebookEditorProvider');
 export interface INotebookEditorProvider {
-    activeNotebookEditor: NotebookEditor | undefined;
-    findNotebookEditor(resource: Resource): NotebookEditor | undefined;
+    activeNotebookEditor: Promise<NotebookEditor | undefined>;
+    findNotebookEditor(resource: Resource): Promise<NotebookEditor | undefined>;
     findAssociatedNotebookDocument(uri: Uri): NotebookDocument | undefined;
     registerEmbedNotebookProvider(provider: IEmbedNotebookEditorProvider): void;
 }

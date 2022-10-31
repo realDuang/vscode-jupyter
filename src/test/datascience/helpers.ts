@@ -109,7 +109,7 @@ export async function insertIntoInputEditor(source: string, interactiveWindow?: 
     let inputBox: vscode.TextEditor | undefined;
     if (interactiveWindow) {
         inputBox = vscode.window.visibleTextEditors.find(
-            (e) => e.document.uri.path === interactiveWindow.inputUri.path
+            (e) => e.document.uri.path === interactiveWindow.inputBoxUri.path
         );
     }
     if (!inputBox) {

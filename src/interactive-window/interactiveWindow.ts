@@ -94,11 +94,11 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
     public get owner(): Resource {
         return this._owner;
     }
+    public get notebookUri(): Uri {
+        return this.notebookDocument.uri;
+    }
     public get submitters(): Uri[] {
         return this._submitters;
-    }
-    public get notebookDocument(): NotebookDocument {
-        return this.notebookEditor?.notebook;
     }
     public get kernelConnectionMetadata(): KernelConnectionMetadata | undefined {
         return this.currentKernelInfo.metadata;
@@ -119,12 +119,6 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
         controller?: NotebookController;
         metadata?: KernelConnectionMetadata;
     } = {};
-    private _notebookEditor: NotebookEditor;
-    public get notebookEditor(): NotebookEditor {
-        return this._notebookEditor;
-    }
-
-    public readonly notebookUri: Uri;
 
     private readonly documentManager: IDocumentManager;
     private readonly fs: IFileSystem;
@@ -147,8 +141,8 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
         private _owner: Resource,
         public mode: InteractiveWindowMode,
         preferredController: IVSCodeNotebookController | undefined,
-        notebookEditorOrTab: NotebookEditor | InteractiveTab,
-        public readonly inputUri: Uri
+        public readonly notebookDocument: NotebookDocument,
+        public readonly inputBoxUri: Uri
     ) {
         this.documentManager = this.serviceContainer.get<IDocumentManager>(IDocumentManager);
         this.commandManager = this.serviceContainer.get<ICommandManager>(ICommandManager);
@@ -169,13 +163,6 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
         );
         this.isWebExtension = this.serviceContainer.get<boolean>(IsWebExtension);
         this.controllerRegistration = this.serviceContainer.get<IControllerRegistration>(IControllerRegistration);
-        this.notebookUri = isInteractiveInputTab(notebookEditorOrTab)
-            ? notebookEditorOrTab.input.uri
-            : notebookEditorOrTab.notebook.uri;
-
-        if (!isInteractiveInputTab(notebookEditorOrTab)) {
-            this._notebookEditor = notebookEditorOrTab;
-        }
 
         if (preferredController) {
             this.currentKernelInfo = {
@@ -207,18 +194,10 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
         this.listenForControllerSelection();
 
         this.cellMatcher = new CellMatcher(this.configuration.getSettings(this.owningResource));
-        if (this.notebookDocument) {
-            this.codeGeneratorFactory.getOrCreate(this.notebookDocument);
-        }
+        this.codeGeneratorFactory.getOrCreate(this.notebookDocument);
     }
 
     public async ensureInitialized() {
-        if (!this._notebookEditor) {
-            this._notebookEditor = await this.showInteractiveEditor();
-
-            this.codeGeneratorFactory.getOrCreate(this.notebookDocument);
-        }
-
         if (this.currentKernelInfo) {
             this.startKernel().ignoreErrors();
         } else {
@@ -477,7 +456,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
     /**
      * Open the the editor for the interactive window, re-using the tab if it already exists.
      */
-    public async showInteractiveEditor(): Promise<NotebookEditor> {
+    public async showEditor(): Promise<NotebookEditor> {
         let currentTab: InteractiveTab | undefined;
         window.tabGroups.all.find((group) => {
             group.tabs.find((tab) => {
@@ -735,7 +714,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
     }
 
     public async scrollToCell(id: string): Promise<void> {
-        const editor = await this.showInteractiveEditor();
+        const editor = await this.showEditor();
         const matchingCell = this.notebookDocument
             .getCells()
             .find((cell) => getInteractiveCellMetadata(cell)?.id === id);

@@ -170,7 +170,7 @@ export class NotebookCommandListener implements IDataScienceCommandListener {
     }
 
     private async interruptKernel(notebookUri: Uri | undefined): Promise<void> {
-        const uri = notebookUri ?? this.notebookEditorProvider.activeNotebookEditor?.notebook.uri;
+        const uri = notebookUri ?? (await this.notebookEditorProvider.activeNotebookEditor)?.notebook.uri;
         const document = workspace.notebookDocuments.find((document) => document.uri.toString() === uri?.toString());
 
         if (document === undefined) {
@@ -187,7 +187,7 @@ export class NotebookCommandListener implements IDataScienceCommandListener {
     }
 
     private async restartKernel(notebookUri: Uri | undefined) {
-        const uri = notebookUri ?? this.notebookEditorProvider.activeNotebookEditor?.notebook.uri;
+        const uri = notebookUri ?? (await this.notebookEditorProvider.activeNotebookEditor)?.notebook.uri;
         const document = workspace.notebookDocuments.find((document) => document.uri.toString() === uri?.toString());
 
         if (document === undefined) {
