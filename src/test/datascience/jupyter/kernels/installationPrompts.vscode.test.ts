@@ -34,6 +34,7 @@ import { closeActiveWindows, initialize } from '../../../initialize.node';
 import {
     installIPyKernel,
     openNotebook,
+    runCurrentFile,
     submitFromPythonFile,
     submitFromPythonFileUsingCodeWatcher,
     uninstallIPyKernel
@@ -68,6 +69,7 @@ import { isUri } from '../../../../platform/common/utils/misc';
 import { hasErrorOutput, translateCellErrorOutput } from '../../../../kernels/execution/helpers';
 import { BaseKernelError } from '../../../../kernels/errors/types';
 import { IControllerRegistration, IControllerSelection } from '../../../../notebooks/controllers/types';
+import { traceInfo } from '../../../../platform/logging';
 
 /* eslint-disable no-invalid-this, , , @typescript-eslint/no-explicit-any */
 suite('Install IPyKernel (install) @kernelInstall', function () {
@@ -268,16 +270,14 @@ suite('Install IPyKernel (install) @kernelInstall', function () {
         if (IS_REMOTE_NATIVE_TEST()) {
             return this.skip();
         }
-        // This is a complex test that tests the following workflow (which used to fail)
+        // This is a complex test that tests the following workflow
         // Verify errors are displayed against the cells being executed.
         // 1. Run cell against env that does not have ipykernel
-        // 2. Ensure we get a prompt
-        // 3. Dismiss the prompt (at this point we'd get yet another prompt).
-        // 4. Run another cell & we should get another prompt (this didn't work)
-        // 5. Run another cell & we should get another prompt (this didn't work)
+        // 2. Ensure we get a prompt and dismiss it
+        // 4. Run another cell & we should get another prompt
         // 6. Run another cell & select another kernel without ipykernel
         // 7. We should get two prompts: one for the original env, and one for the new one we switched to
-        // 9. Finally click ok to install and run & verify we install ipykernel into the right place, (this didn't work either)
+        // 9. Finally click ok to install and run & verify we install ipykernel into the right place
 
         // Confirm message is displayed & then dismiss the message (so that execution stops due to missing dependency).
         let prompt = await hijackPrompt(
@@ -304,22 +304,21 @@ suite('Install IPyKernel (install) @kernelInstall', function () {
         await verifyIPyKernelPromptDisplayed(prompt, venvNoKernelPath.fsPath);
         await verifyErrorInCellOutput(notebookDocument, venvNoKernelPath.fsPath);
 
-        // Submitting code again should display the same prompt again.
+        traceInfo('Test Progress: Submitting code and ensuring the missing dependency prompt');
         prompt.reset();
-        await activeInteractiveWindow.addCode(source, untitledPythonFile.uri, 0).catch(noop);
+        await runCurrentFile(interactiveWindowProvider, untitledPythonFile);
         await verifyIPyKernelPromptDisplayed(prompt, venvNoKernelPath.fsPath);
         await verifyErrorInCellOutput(notebookDocument, venvNoKernelPath.fsPath);
 
-        // Submitting code again should display the same prompt again.
+        traceInfo('Test Progress: Submitting code again and ensuring the same prompt');
         prompt.reset();
-        await activeInteractiveWindow.addCode(source, untitledPythonFile.uri, 0).catch(noop);
+        await runCurrentFile(interactiveWindowProvider, untitledPythonFile);
         await verifyIPyKernelPromptDisplayed(prompt, venvNoKernelPath.fsPath);
         await verifyErrorInCellOutput(notebookDocument, venvNoKernelPath.fsPath);
 
         await sleep(1_000);
 
         // Verify we didn't get a prompt again.
-        // In the past when we dismissed the prompt, we would get a prompt again.
         assert.strictEqual(prompt.getDisplayCount(), 1, 'Should not display additional prompts');
 
         prompt.dispose();
@@ -352,57 +351,57 @@ suite('Install IPyKernel (install) @kernelInstall', function () {
         disposables.push({ dispose: () => stub.restore() });
 
         // Submitting code again should display the same prompt again, but this time we're going to select another kernel.
-        await activeInteractiveWindow.addCode(source, untitledPythonFile.uri, 0).catch(noop);
+        traceInfo('Test Progress: Submitting code again and picking a new kernel with the prompt');
+        await runCurrentFile(interactiveWindowProvider, untitledPythonFile);
 
-        await Promise.all([
-            // The prompt should be displayed when we run a cell.
-            waitForCondition(() => prompt.displayed, delayForUITest, 'Prompt not displayed'),
-            // The prompt should be displayed twice (one for first kernel, second for the second kernel).
-            // This is because the second kernel we switched to, also doesn't have ipykernel (& we should auto run the same against that).
-            waitForCondition(() => prompt.getDisplayCount() === 2, delayForUITest, 'Prompt not displayed twice'),
-            // Verify kernel picker was displayed
-            waitForCondition(() => stub.called, delayForUITest, 'Prompt not displayed twice'),
-            // Verify the the name of the new env is included in the prompt displayed (instead of the old message);
-            waitForCondition(
-                () =>
-                    prompt.messages.some((message) =>
-                        message.includes(path.basename(path.dirname(path.dirname(venvNoKernelPath.fsPath))))
-                    ),
-                delayForUITest,
-                `Prompts '${prompt.messages}' do not include ${path.basename(
-                    path.dirname(path.dirname(venvNoKernelPath.fsPath))
-                )}`
-            ),
-            // Verify the the name of the new env is included in the prompt displayed (instead of the old message);
-            waitForCondition(
-                () =>
-                    prompt.messages.some((message) =>
-                        message.includes(path.basename(path.dirname(path.dirname(venvNoRegPath.fsPath))))
-                    ),
-                delayForUITest,
-                `Prompts '${prompt.messages}' do not include ${path.basename(
-                    path.dirname(path.dirname(venvNoRegPath.fsPath))
-                )}`
-            )
-        ]);
+        // The prompt should be displayed when we run a cell.
+        await waitForCondition(() => prompt.displayed, delayForUITest, 'Prompt not displayed');
+        // The prompt should be displayed twice (one for first kernel, second for the second kernel).
+        // This is because the second kernel we switched to, also doesn't have ipykernel (& we should auto run the same against that).
+        await waitForCondition(() => prompt.getDisplayCount() === 2, delayForUITest, 'Prompt not displayed twice');
+        // Verify kernel picker was displayed
+        await waitForCondition(() => stub.called, delayForUITest, 'kernel picker was not displayed');
+        // Verify the the name of the new env is included in the prompt displayed (instead of the old message);
+        await waitForCondition(
+            () =>
+                prompt.messages.some((message) =>
+                    message.includes(path.basename(path.dirname(path.dirname(venvNoKernelPath.fsPath))))
+                ),
+            delayForUITest,
+            `Prompts '${prompt.messages}' do not include ${path.basename(
+                path.dirname(path.dirname(venvNoKernelPath.fsPath))
+            )}`
+        );
+        // Verify the the name of the new env is included in the prompt displayed (instead of the old message);
+        await waitForCondition(
+            () =>
+                prompt.messages.some((message) =>
+                    message.includes(path.basename(path.dirname(path.dirname(venvNoRegPath.fsPath))))
+                ),
+            delayForUITest,
+            `Prompts '${prompt.messages}' do not include ${path.basename(
+                path.dirname(path.dirname(venvNoRegPath.fsPath))
+            )}`
+        );
 
-        // Submitting code again should display the same prompt again.
+        traceInfo('Test Progress: Submitting code to new kernel and ensuring the missing dependency prompt');
         prompt.reset();
-        await activeInteractiveWindow.addCode(source, untitledPythonFile.uri, 0).catch(noop);
+        await runCurrentFile(interactiveWindowProvider, untitledPythonFile);
         await verifyIPyKernelPromptDisplayed(prompt, venvNoRegPath.fsPath);
         await verifyErrorInCellOutput(notebookDocument, venvNoRegPath.fsPath);
 
-        // Submitting code again should display the same prompt again.
+        traceInfo('Test Progress: Submitting code again to new kernel');
         prompt.reset();
-        await activeInteractiveWindow.addCode(source, untitledPythonFile.uri, 0).catch(noop);
+        await runCurrentFile(interactiveWindowProvider, untitledPythonFile);
         await verifyIPyKernelPromptDisplayed(prompt, venvNoRegPath.fsPath);
         await verifyErrorInCellOutput(notebookDocument, venvNoRegPath.fsPath);
 
-        // Now install ipykernel and ensure we can run a cell & that it runs against the right environment.
+        // install the missing dependency in the new kernel when we see the prompt again
         prompt.reset();
         promptOptions.dismissPrompt = false;
         promptOptions.result = Common.install();
 
+        traceInfo('Test Progress: Submitting code and installing missing dependencies through the prompt');
         await activeInteractiveWindow
             .addCode(`import sys${EOL}print(sys.executable)`, untitledPythonFile.uri, 0)
             .catch(noop);
