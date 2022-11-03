@@ -341,11 +341,9 @@ suite('Install IPyKernel (install) @kernelInstall', function () {
             promptOptions.dismissPrompt = true;
             delete promptOptions.result;
             // In tests, things hang as the IW isn't focused.
-            let notebookEditor = await activeInteractiveWindow.showEditor(false);
-            await waitForKernelToChange(
-                { interpreterPath: venvNoRegPath, isInteractiveController: true },
-                notebookEditor
-            );
+            let editor = await activeInteractiveWindow.showEditor(false);
+            assert(editor, 'No Interactive editor');
+            await waitForKernelToChange({ interpreterPath: venvNoRegPath, isInteractiveController: true }, editor);
             return true;
         } as any);
         disposables.push({ dispose: () => stub.restore() });

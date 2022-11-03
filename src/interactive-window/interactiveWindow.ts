@@ -25,7 +25,7 @@ import {
 import { ICommandManager, IDocumentManager, IWorkspaceService } from '../platform/common/application/types';
 import { Commands, defaultNotebookFormat, MARKDOWN_LANGUAGE, PYTHON_LANGUAGE } from '../platform/common/constants';
 import '../platform/common/extensions';
-import { traceError, traceInfoIfCI, traceWarning } from '../platform/logging';
+import { traceError, traceInfoIfCI, traceVerbose, traceWarning } from '../platform/logging';
 import { IFileSystem } from '../platform/common/platform/types';
 import uuid from 'uuid/v4';
 
@@ -467,6 +467,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
         });
 
         const document = await workspace.openNotebookDocument(this.notebookUri);
+        traceVerbose(`Showing IW editor for ${this.notebookUri.toString()} re-using tab: ${currentTab ? 'yes' : 'no'}`);
         return await window.showNotebookDocument(document, {
             preserveFocus,
             viewColumn: currentTab?.group.viewColumn
