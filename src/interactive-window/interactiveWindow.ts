@@ -456,7 +456,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
     /**
      * Open the the editor for the interactive window, re-using the tab if it already exists.
      */
-    public async showEditor(): Promise<NotebookEditor> {
+    public async showEditor(preserveFocus: boolean = true): Promise<NotebookEditor> {
         let currentTab: InteractiveTab | undefined;
         window.tabGroups.all.find((group) => {
             group.tabs.find((tab) => {
@@ -468,7 +468,7 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
 
         const document = await workspace.openNotebookDocument(this.notebookUri);
         return await window.showNotebookDocument(document, {
-            preserveFocus: true,
+            preserveFocus,
             viewColumn: currentTab?.group.viewColumn
         });
     }

@@ -540,8 +540,8 @@ async function waitForKernelToChangeImpl(
                 // Double check not the right kernel (don't select again if already found to be correct)
                 if (!(await isRightKernel()) && !skipAutoSelection) {
                     const criteria = typeof searchCriteria === 'function' ? await searchCriteria() : searchCriteria;
-                    lastCriteria = JSON.stringify(lastCriteria);
-                    traceInfoIfCI(
+                    lastCriteria = JSON.stringify(criteria);
+                    traceInfo(
                         `Notebook select.kernel command switching to kernel id ${controller?.connection.kind}${
                             controller?.id
                         }: Try ${tryCount} for ${JSON.stringify(criteria)}`
@@ -551,7 +551,7 @@ async function waitForKernelToChangeImpl(
                         id: controller?.id,
                         extension: JVSC_EXTENSION_ID
                     });
-                    traceInfoIfCI(
+                    traceInfo(
                         `Notebook select.kernel command switched to kernel id ${controller?.connection.kind}:${controller?.id}`
                     );
                     tryCount += 1;
@@ -565,7 +565,7 @@ async function waitForKernelToChangeImpl(
         );
         // Make sure the kernel is actually in use before returning (switching is async)
         await sleep(500);
-        traceInfoIfCI(
+        traceInfo(
             `Notebook select.kernel command successfully switched to kernel id ${controller?.connection.kind}${controller?.id}: after ${tryCount} attempts.`
         );
     }

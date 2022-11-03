@@ -72,7 +72,7 @@ export interface IInteractiveWindow extends IInteractiveBase {
     expandAllCells(): Promise<void>;
     collapseAllCells(): Promise<void>;
     scrollToCell(id: string): void;
-    showEditor(): Promise<NotebookEditor>;
+    showEditor(preserveFocus?: boolean): Promise<NotebookEditor>;
     exportAs(cells?: ICell[]): void;
     export(cells?: ICell[]): void;
 }
