@@ -206,10 +206,17 @@ export async function runNewPythonFile(
 
 export async function runCurrentFile(interactiveWindowProvider: IInteractiveWindowProvider, file: vscode.TextDocument) {
     await vscode.window.showTextDocument(file);
-    const activeInteractiveWindow = (await interactiveWindowProvider.getOrCreate(file.uri)) as InteractiveWindow;
-    await waitForInteractiveWindow(activeInteractiveWindow);
     await vscode.commands.executeCommand(Commands.RunFileInInteractiveWindows, file.uri);
-    return activeInteractiveWindow;
+    let interactiveWindow: IInteractiveWindow | undefined;
+    await waitForCondition(
+        () => {
+            interactiveWindow = interactiveWindowProvider.get(file.uri);
+            return interactiveWindow !== undefined;
+        },
+        defaultNotebookTestTimeout,
+        'Interactive window notebook document not found'
+    );
+    return interactiveWindow as InteractiveWindow;
 }
 
 export async function closeInteractiveWindow(interactiveWindow: IInteractiveWindow) {
