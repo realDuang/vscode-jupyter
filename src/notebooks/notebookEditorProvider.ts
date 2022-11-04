@@ -30,12 +30,12 @@ export class NotebookEditorProvider implements INotebookEditorProvider {
     }
 
     async findNotebookEditor(resource: Resource): Promise<NotebookEditor | undefined> {
-        let editor = window.visibleNotebookEditors.find((e) => {
-            return e.notebook.uri.toString() === resource?.toString();
-        });
-        if (editor) {
-            return editor;
-        }
+        // let editor = window.visibleNotebookEditors.find((e) => {
+        //     return e.notebook.uri.toString() === resource?.toString();
+        // });
+        // if (editor) {
+        //     return editor;
+        // }
 
         const key = resource ? getComparisonKey(resource, true) : 'false';
         const notebook =

@@ -25,7 +25,7 @@ import {
 import { ICommandManager, IDocumentManager, IWorkspaceService } from '../platform/common/application/types';
 import { Commands, defaultNotebookFormat, MARKDOWN_LANGUAGE, PYTHON_LANGUAGE } from '../platform/common/constants';
 import '../platform/common/extensions';
-import { traceError, traceInfoIfCI, traceWarning } from '../platform/logging';
+import { traceError, traceInfoIfCI, traceVerbose, traceWarning } from '../platform/logging';
 import { IFileSystem } from '../platform/common/platform/types';
 import uuid from 'uuid/v4';
 
@@ -50,8 +50,13 @@ import { INotebookExporter } from '../kernels/jupyter/types';
 import { IExportDialog, ExportFormat } from '../notebooks/export/types';
 import { generateCellsFromNotebookDocument } from './editor-integration/cellFactory';
 import { CellMatcher } from './editor-integration/cellMatcher';
-import { IInteractiveWindowLoadable, IInteractiveWindowDebugger, IInteractiveWindowDebuggingManager } from './types';
-import { generateInteractiveCode } from './helpers';
+import {
+    IInteractiveWindowLoadable,
+    IInteractiveWindowDebugger,
+    IInteractiveWindowDebuggingManager,
+    InteractiveTab
+} from './types';
+import { generateInteractiveCode, isInteractiveInputTab } from './helpers';
 import {
     IControllerRegistration,
     IControllerSelection,
@@ -452,28 +457,21 @@ export class InteractiveWindow implements IInteractiveWindowLoadable {
      * Open the the editor for the interactive window, re-using the tab if it already exists.
      */
     public async showEditor(): Promise<NotebookEditor> {
-        return await this.commandManager.executeCommand(
-            'interactive.open',
-            { preserveFocus: true },
-            this.notebookUri,
-            undefined,
-            undefined
-        );
-        // let currentTab: InteractiveTab | undefined;
-        // window.tabGroups.all.find((group) => {
-        //     group.tabs.find((tab) => {
-        //         if (isInteractiveInputTab(tab) && tab.input.uri.toString() == this.notebookUri.toString()) {
-        //             currentTab = tab;
-        //         }
-        //     });
-        // });
+        let currentTab: InteractiveTab | undefined;
+        window.tabGroups.all.find((group) => {
+            group.tabs.find((tab) => {
+                if (isInteractiveInputTab(tab) && tab.input.uri.toString() == this.notebookUri.toString()) {
+                    currentTab = tab;
+                }
+            });
+        });
 
-        // const document = await workspace.openNotebookDocument(this.notebookUri);
-        // traceVerbose(`Showing IW editor for ${this.notebookUri.toString()} re-using tab: ${currentTab ? 'yes' : 'no'}`);
-        // return await window.showNotebookDocument(document, {
-        //     preserveFocus: true,
-        //     viewColumn: currentTab?.group.viewColumn
-        // });
+        const document = await workspace.openNotebookDocument(this.notebookUri);
+        traceVerbose(`Showing IW editor for ${this.notebookUri.toString()} re-using tab: ${currentTab ? 'yes' : 'no'}`);
+        return await window.showNotebookDocument(document, {
+            preserveFocus: true,
+            viewColumn: currentTab?.group.viewColumn
+        });
     }
 
     public dispose() {
