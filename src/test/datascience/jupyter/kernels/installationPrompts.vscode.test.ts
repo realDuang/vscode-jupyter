@@ -299,6 +299,8 @@ suite('Install IPyKernel (install) @kernelInstall', function () {
             (doc) => doc.uri.toString() === activeInteractiveWindow?.notebookUri?.toString()
         )!;
 
+        await activeInteractiveWindow.showEditor();
+
         // The prompt should be displayed when we run a cell.
         await waitForCondition(async () => prompt.displayed.then(() => true), delayForUITest, 'Prompt not displayed');
         await verifyIPyKernelPromptDisplayed(prompt, venvNoKernelPath.fsPath);
@@ -341,7 +343,7 @@ suite('Install IPyKernel (install) @kernelInstall', function () {
             promptOptions.dismissPrompt = true;
             delete promptOptions.result;
             // In tests, things hang as the IW isn't focused.
-            let editor = await activeInteractiveWindow.showEditor(false);
+            let editor = await activeInteractiveWindow.showEditor();
             assert(editor, 'No Interactive editor');
             await waitForKernelToChange({ interpreterPath: venvNoRegPath, isInteractiveController: true }, editor);
             return true;

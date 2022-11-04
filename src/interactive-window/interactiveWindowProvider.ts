@@ -153,6 +153,7 @@ export class InteractiveWindowProvider
     }
 
     public async getOrCreate(resource: Resource, connection?: KernelConnectionMetadata): Promise<IInteractiveWindow> {
+        traceVerbose(`InteractiveWindowProvider.getOrCreate ${resource?.toString()}`);
         if (!this.workspaceService.isTrusted) {
             // This should not happen, but if it does, then just throw an error.
             // The commands the like should be disabled.
@@ -340,6 +341,7 @@ export class InteractiveWindowProvider
         interactiveMode: InteractiveWindowMode,
         connection?: KernelConnectionMetadata
     ): IInteractiveWindow | undefined {
+        traceVerbose(`Searching for existing interactive window for ${owner?.toString()}`);
         // Single mode means there's only ever one.
         if (interactiveMode === 'single') {
             return this._windows.length > 0 ? this._windows[0] : undefined;
