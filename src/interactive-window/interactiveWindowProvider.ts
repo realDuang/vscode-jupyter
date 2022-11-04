@@ -341,7 +341,6 @@ export class InteractiveWindowProvider
         interactiveMode: InteractiveWindowMode,
         connection?: KernelConnectionMetadata
     ): IInteractiveWindow | undefined {
-        traceVerbose(`Searching for existing interactive window for ${owner?.toString()}`);
         // Single mode means there's only ever one.
         if (interactiveMode === 'single') {
             return this._windows.length > 0 ? this._windows[0] : undefined;

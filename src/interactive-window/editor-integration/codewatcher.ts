@@ -138,7 +138,7 @@ export class CodeWatcher implements ICodeWatcher {
     }
     @captureUsageTelemetry(Telemetry.RunAllCells)
     public async runAllCells() {
-        const iw = await this.getActiveInteractiveWindow();
+        const iw = await this.getInteractiveWindow();
         const runCellCommands = this.codeLenses.filter(
             (c) =>
                 c.command &&
@@ -194,7 +194,7 @@ export class CodeWatcher implements ICodeWatcher {
     // Run all cells up to the cell containing this start line and character
     @captureUsageTelemetry(Telemetry.RunAllCellsAbove)
     public async runAllCellsAbove(stopLine: number, stopCharacter: number) {
-        const iw = await this.getActiveInteractiveWindow();
+        const iw = await this.getInteractiveWindow();
         const runCellCommands = this.codeLenses.filter((c) => c.command && c.command.command === Commands.RunCell);
         let leftCount = runCellCommands.findIndex(
             (c) => c.range.start.line >= stopLine && c.range.start.character >= stopCharacter
@@ -232,7 +232,7 @@ export class CodeWatcher implements ICodeWatcher {
 
     @captureUsageTelemetry(Telemetry.RunCellAndAllBelow)
     public async runCellAndAllBelow(startLine: number, startCharacter: number) {
-        const iw = await this.getActiveInteractiveWindow();
+        const iw = await this.getInteractiveWindow();
         const runCellCommands = this.codeLenses.filter((c) => c.command && c.command.command === Commands.RunCell);
         const index = runCellCommands.findIndex(
             (c) => c.range.start.line >= startLine && c.range.start.character >= startCharacter
@@ -258,7 +258,7 @@ export class CodeWatcher implements ICodeWatcher {
     @captureUsageTelemetry(Telemetry.RunSelectionOrLine)
     public async runSelectionOrLine(activeEditor: TextEditor | undefined, text?: string | Uri) {
         if (this.document && activeEditor && urlPath.isEqual(activeEditor.document.uri, this.document.uri)) {
-            const iw = await this.getActiveInteractiveWindow();
+            const iw = await this.getInteractiveWindow();
             let codeToExecute: string | undefined;
             if (text === undefined || isUri(text)) {
                 // Get just the text of the selection or the current line if none
@@ -280,7 +280,7 @@ export class CodeWatcher implements ICodeWatcher {
     @captureUsageTelemetry(Telemetry.RunToLine)
     public async runToLine(targetLine: number) {
         if (this.document && targetLine > 0) {
-            const iw = await this.getActiveInteractiveWindow();
+            const iw = await this.getInteractiveWindow();
             const previousLine = this.document.lineAt(targetLine - 1);
             const code = this.document.getText(
                 new Range(0, 0, previousLine.range.end.line, previousLine.range.end.character)
@@ -295,7 +295,7 @@ export class CodeWatcher implements ICodeWatcher {
     @captureUsageTelemetry(Telemetry.RunFromLine)
     public async runFromLine(targetLine: number) {
         if (this.document && targetLine < this.document.lineCount) {
-            const iw = await this.getActiveInteractiveWindow();
+            const iw = await this.getInteractiveWindow();
             const lastLine = this.document.lineAt(this.document.lineCount - 1);
             const code = this.document.getText(
                 new Range(targetLine, 0, lastLine.range.end.line, lastLine.range.end.character)
@@ -991,7 +991,7 @@ export class CodeWatcher implements ICodeWatcher {
         }
     }
 
-    private getActiveInteractiveWindow() {
+    private getInteractiveWindow() {
         return this.interactiveWindowProvider.getOrCreate(this.document?.uri);
     }
     private async addCode(
@@ -1038,7 +1038,7 @@ export class CodeWatcher implements ICodeWatcher {
             }
 
             // Run the cell after moving the selection
-            const iw = await this.getActiveInteractiveWindow();
+            const iw = await this.getInteractiveWindow();
             await this.addCode(iw, code, this.document.uri, currentRunCellLens.range.start.line, debug);
         }
     }
@@ -1101,7 +1101,7 @@ export class CodeWatcher implements ICodeWatcher {
 
     private async runFileInteractiveInternal(debug: boolean) {
         if (this.document) {
-            const iw = await this.getActiveInteractiveWindow();
+            const iw = await this.getInteractiveWindow();
             const code = this.document.getText();
 
             // Split code into cells
