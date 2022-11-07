@@ -398,18 +398,27 @@ export class InteractiveWindowProvider
         }
     }
 
-    async findNotebookEditor(resource: Resource): Promise<NotebookEditor | undefined> {
-        const targetInteractiveWindow =
+    async findNotebookEditor(resource: Uri): Promise<NotebookEditor | undefined> {
+        let targetInteractiveWindow =
             resource && getResourceType(resource) === 'interactive' ? this.get(resource) : undefined;
-        if (targetInteractiveWindow) {
-            return await targetInteractiveWindow.showEditor();
+
+        if (!targetInteractiveWindow) {
+            targetInteractiveWindow =
+                getResourceType(resource) === 'interactive' ? this.getActiveOrAssociatedInteractiveWindow() : undefined;
+        }
+        if (!targetInteractiveWindow) {
+            return;
         }
 
-        const activeInteractiveWindow =
-            getResourceType(resource) === 'interactive' ? this.getActiveOrAssociatedInteractiveWindow() : undefined;
+        for (const editor of window.visibleNotebookEditors) {
+            if (editor.notebook.uri.toString() === targetInteractiveWindow.notebookUri?.toString()) {
+                return editor;
+            }
+        }
+        traceInfo(`Notebook Editor not visible for resource file: ${resource.toString()}. Need to open it first.`);
 
-        if (activeInteractiveWindow) {
-            return await activeInteractiveWindow?.showEditor();
+        if (targetInteractiveWindow) {
+            return await targetInteractiveWindow.showEditor();
         }
     }
 
