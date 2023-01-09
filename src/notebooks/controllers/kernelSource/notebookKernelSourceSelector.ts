@@ -128,11 +128,13 @@ export class NotebookKernelSourceSelector implements INotebookKernelSourceSelect
         notebook: NotebookDocument,
         providerId: string
     ): Promise<RemoteKernelConnectionMetadata | undefined> {
+        console.error('select remote kernel');
         // Reject if it's not our type
         if (notebook.notebookType !== JupyterNotebookView && notebook.notebookType !== InteractiveWindowView) {
             return;
         }
         const provider = await this.uriProviderRegistration.getProvider(providerId);
+        console.log('provider details', provider);
         if (!provider) {
             throw new Error(`Remote Provider Id ${providerId} not found`);
         }
@@ -174,6 +176,7 @@ export class NotebookKernelSourceSelector implements INotebookKernelSourceSelect
         state: MultiStepResult
     ): Promise<InputStep<MultiStepResult> | void> {
         const savedURIList = await this.serverUriStorage.getSavedUriList();
+        console.error('savedUriList', savedURIList, this.kernelFinder.registered);
 
         if (token.isCancellationRequested) {
             return;
@@ -184,13 +187,17 @@ export class NotebookKernelSourceSelector implements INotebookKernelSourceSelect
         ) as IRemoteKernelFinder[];
         const items: (ContributedKernelFinderQuickPickItem | KernelProviderItemsQuickPickItem | QuickPickItem)[] = [];
 
+        console.error('servers', servers);
         for (const server of servers) {
             // remote server
             const savedURI = savedURIList.find((uri) => uri.uri === server.serverUri.uri);
-            if (savedURI) {
+            console.error('savedUriList 2', savedURI);
+            if (savedURI && savedURI.uri !== 'local') {
                 const idAndHandle = extractJupyterServerHandleAndId(savedURI.uri);
+                console.error('idAndHandle', idAndHandle);
 
                 if (idAndHandle && idAndHandle.id === provider.id) {
+                    console.error('idAndHandle Found', idAndHandle);
                     // local server
                     const uriDate = new Date(savedURI.time);
                     items.push({
@@ -260,7 +267,7 @@ export class NotebookKernelSourceSelector implements INotebookKernelSourceSelect
         if (token.isCancellationRequested) {
             return;
         }
-
+        console.error('About to select a kernel', selectedSource);
         if (selectedSource && 'type' in selectedSource) {
             switch (selectedSource.type) {
                 case KernelFinderEntityQuickPickType.KernelFinder:
@@ -268,6 +275,7 @@ export class NotebookKernelSourceSelector implements INotebookKernelSourceSelect
                 case KernelFinderEntityQuickPickType.UriProviderQuickPick:
                     try {
                         const ret = await this.selectRemoteServerFromRemoteKernelFinder(selectedSource, state, token);
+                        console.log('selectRemoteServerFromRemoteKernelFinder', ret);
                         return ret;
                     } catch (ex) {
                         if (ex === InputFlowAction.back) {
@@ -287,6 +295,7 @@ export class NotebookKernelSourceSelector implements INotebookKernelSourceSelect
         state: MultiStepResult,
         token: CancellationToken
     ) {
+        console.log('selectedSource', selectedSource);
         if (!selectedSource.provider.handleQuickPick || token.isCancellationRequested) {
             return;
         }
