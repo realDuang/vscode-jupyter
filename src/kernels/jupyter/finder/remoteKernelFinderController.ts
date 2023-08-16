@@ -3,14 +3,16 @@
 
 import { injectable, inject } from 'inversify';
 import { IKernelFinder, IKernelProvider } from '../../types';
-import { IDisposableRegistry, IExtensionContext } from '../../../platform/common/types';
+import { IDisposableRegistry, IExtensionContext, IFeaturesManager } from '../../../platform/common/types';
 import {
     IOldJupyterSessionManagerFactory,
     IJupyterServerUriStorage,
     IJupyterRemoteCachedKernelValidator,
     IJupyterServerUriEntry,
     IJupyterUriProviderRegistration,
-    JupyterServerProviderHandle
+    JupyterServerProviderHandle,
+    IJupyterServerProviderRegistry,
+    IRemoteKernelFinder
 } from '../types';
 import { noop } from '../../../platform/common/utils/misc';
 import { IApplicationEnvironment } from '../../../platform/common/application/types';
@@ -22,10 +24,13 @@ import { IFileSystem } from '../../../platform/common/platform/types';
 import { ContributedKernelFinderKind } from '../../internalTypes';
 import { generateIdFromRemoteProvider } from '../jupyterUtils';
 import { swallowExceptions } from '../../../platform/common/utils/decorators';
-import { IJupyterUriProvider } from '../../../api';
+import { IJupyterUriProvider, JupyterServerCollection, JupyterServerProvider } from '../../../api';
+import { CancellationTokenSource } from 'vscode';
+import { traceError } from '../../../platform/logging';
+import { IRemoteKernelFinderController } from './types';
 
 @injectable()
-export class RemoteKernelFinderController implements IExtensionSyncActivationService {
+export class RemoteKernelFinderController implements IRemoteKernelFinderController, IExtensionSyncActivationService {
     private serverFinderMapping: Map<string, RemoteKernelFinder> = new Map<string, RemoteKernelFinder>();
 
     constructor(
@@ -42,12 +47,17 @@ export class RemoteKernelFinderController implements IExtensionSyncActivationSer
         @inject(IFileSystem) private readonly fs: IFileSystem,
         @inject(IExtensionContext) private readonly context: IExtensionContext,
         @inject(IJupyterUriProviderRegistration)
-        private readonly jupyterPickerRegistration: IJupyterUriProviderRegistration
+        private readonly jupyterPickerRegistration: IJupyterUriProviderRegistration,
+        @inject(IJupyterServerProviderRegistry)
+        private readonly jupyterServerProviderRegistry: IJupyterServerProviderRegistry,
+        @inject(IFeaturesManager)
+        private readonly features: IFeaturesManager
     ) {}
     private readonly handledProviders = new WeakSet<IJupyterUriProvider>();
     activate() {
         this.serverUriStorage.onDidAdd((server) => this.validateAndCreateFinder(server), this, this.disposables);
         this.serverUriStorage.onDidChange(this.buildListOfFinders, this, this.disposables);
+        this.serverUriStorage.onDidLoad(this.handleProviderChanges, this, this.disposables);
         // Possible some extensions register their providers later.
         // And also possible they load their old server later, hence we need to go through the
         // MRU list again and try to build the finders, as the servers might now exist.
@@ -55,9 +65,10 @@ export class RemoteKernelFinderController implements IExtensionSyncActivationSer
 
         // Also check for when a URI is removed
         this.serverUriStorage.onDidRemove(this.urisRemoved, this, this.disposables);
-
+        this.jupyterServerProviderRegistry.onDidChangeProviders(this.handleProviderChanges, this, this.disposables);
         // Add in the URIs that we already know about
         this.buildListOfFinders();
+        this.handleProviderChanges().catch(noop);
     }
     private buildListOfFinders() {
         // Add in the URIs that we already know about
@@ -77,6 +88,77 @@ export class RemoteKernelFinderController implements IExtensionSyncActivationSer
         });
         this.buildListOfFinders();
     }
+    private mappedProviders = new WeakSet<JupyterServerProvider>();
+    private mappedServers = new Set<string>();
+    @swallowExceptions('Handle Jupyter Provider Changes')
+    private async handleProviderChanges() {
+        if (!this.features.features.enableProposedJupyterServerProviderApi) {
+            return;
+        }
+        if (!this.serverUriStorage.all.length) {
+            // We do not have any of the previously used servers, or the data has not yet loaded.
+            return;
+        }
+        const token = new CancellationTokenSource();
+        this.disposables.push(token);
+        await Promise.all(
+            this.jupyterServerProviderRegistry.providers.map((collection) => {
+                const serverProvider = collection.serverProvider;
+                if (!serverProvider || this.mappedProviders.has(serverProvider)) {
+                    return;
+                }
+                this.mappedProviders.add(serverProvider);
+                if (serverProvider?.onDidChangeServers) {
+                    serverProvider?.onDidChangeServers(
+                        () => this.lookForServersInCollection(collection),
+                        this,
+                        this.disposables
+                    );
+                }
+                this.serverUriStorage.onDidLoad(
+                    () => this.lookForServersInCollection(collection),
+                    this,
+                    this.disposables
+                );
+                return this.lookForServersInCollection(collection).catch(noop);
+            })
+        );
+        token.dispose();
+    }
+    @swallowExceptions('Check Servers in Jupyter Server Provider')
+    private async lookForServersInCollection(collection: JupyterServerCollection) {
+        if (!this.serverUriStorage.all.length) {
+            // We do not have any of the previously used servers, or the data has not yet loaded.
+            return;
+        }
+        const usedServers = new Set(this.serverUriStorage.all.map((s) => generateIdFromRemoteProvider(s.provider)));
+        const serverProvider = collection.serverProvider;
+        if (!serverProvider) {
+            return;
+        }
+        const token = new CancellationTokenSource();
+        try {
+            const servers = await serverProvider.getJupyterServers(token.token);
+            servers.forEach((server) => {
+                const serverProviderHandle = {
+                    extensionId: collection.extensionId,
+                    handle: server.id,
+                    id: collection.id
+                };
+                const serverId = generateIdFromRemoteProvider(serverProviderHandle);
+                // If this sever was never used in the past, then no need to create a finder for this.
+                if (this.mappedServers.has(serverId) || !usedServers.has(serverId)) {
+                    return;
+                }
+                this.mappedServers.add(serverId);
+                this.createRemoteKernelFinder(serverProviderHandle, server.label);
+            });
+        } catch (ex) {
+            traceError(`Failed to get servers for Collection ${collection.id} in ${collection.extensionId}`, ex);
+        } finally {
+            token.dispose();
+        }
+    }
     @swallowExceptions('Failed to create a Remote Kernel Finder')
     private async validateAndCreateFinder(serverUri: IJupyterServerUriEntry) {
         const serverId = generateIdFromRemoteProvider(serverUri.provider);
@@ -91,7 +173,10 @@ export class RemoteKernelFinderController implements IExtensionSyncActivationSer
         }
     }
 
-    createRemoteKernelFinder(serverProviderHandle: JupyterServerProviderHandle, displayName: string) {
+    public getOrCreateRemoteKernelFinder(
+        serverProviderHandle: JupyterServerProviderHandle,
+        displayName: string
+    ): IRemoteKernelFinder {
         const serverId = generateIdFromRemoteProvider(serverProviderHandle);
         if (!this.serverFinderMapping.has(serverId)) {
             const finder = new RemoteKernelFinder(
@@ -113,6 +198,10 @@ export class RemoteKernelFinderController implements IExtensionSyncActivationSer
 
             finder.activate().then(noop, noop);
         }
+        return this.serverFinderMapping.get(serverId)!;
+    }
+    createRemoteKernelFinder(serverProviderHandle: JupyterServerProviderHandle, displayName: string) {
+        this.getOrCreateRemoteKernelFinder(serverProviderHandle, displayName);
     }
 
     // When a URI is removed, dispose the kernel finder for it
