@@ -7,7 +7,7 @@ import { assert } from 'chai';
 import { anything, instance, mock, verify, when } from 'ts-mockito';
 import { Disposable, EventEmitter, Uri } from 'vscode';
 import { IContributedKernelFinder } from '../../kernels/internalTypes';
-import { IJupyterServerUriEntry, IJupyterServerUriStorage } from '../../kernels/jupyter/types';
+import { IJupyterServerUriStorage, JupyterServerProviderHandle } from '../../kernels/jupyter/types';
 import {
     IJupyterKernelSpec,
     IKernelFinder,
@@ -24,7 +24,7 @@ import {
     IVSCodeNotebook,
     IWorkspaceService
 } from '../../platform/common/application/types';
-import { disposeAllDisposables } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/helpers';
 import { IBrowserService, IConfigurationService, IDisposable, IExtensionContext } from '../../platform/common/types';
 import { IInterpreterService } from '../../platform/interpreter/contracts';
 import { IServiceContainer } from '../../platform/ioc/types';
@@ -105,7 +105,7 @@ suite('Controller Registration', () => {
     }>;
     let onDidChangeFilter: EventEmitter<void>;
     let onDidChangeUri: EventEmitter<void>;
-    let onDidRemoveUris: EventEmitter<IJupyterServerUriEntry[]>;
+    let onDidRemoveUris: EventEmitter<JupyterServerProviderHandle[]>;
     let onDidChangeInterpreter: EventEmitter<PythonEnvironment | undefined>;
     let onDidChangeInterpreters: EventEmitter<PythonEnvironment[]>;
     let contributedLocalKernelFinder: IContributedKernelFinder;
@@ -169,7 +169,7 @@ suite('Controller Registration', () => {
         disposables.push(onDidChangeFilter);
         onDidChangeUri = new EventEmitter<void>();
         disposables.push(onDidChangeUri);
-        onDidRemoveUris = new EventEmitter<IJupyterServerUriEntry[]>();
+        onDidRemoveUris = new EventEmitter<JupyterServerProviderHandle[]>();
         disposables.push(onDidRemoveUris);
         onDidChangeInterpreter = new EventEmitter<PythonEnvironment | undefined>();
         disposables.push(onDidChangeInterpreter);
@@ -218,7 +218,7 @@ suite('Controller Registration', () => {
     });
     teardown(() => {
         sinon.restore();
-        disposeAllDisposables(disposables);
+        dispose(disposables);
     });
 
     [true, false].forEach((web) => {

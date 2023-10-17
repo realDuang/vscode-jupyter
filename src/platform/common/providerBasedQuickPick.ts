@@ -20,7 +20,7 @@ import { Disposables } from './utils';
 import { Common, DataScience } from './utils/localize';
 import { noop } from './utils/misc';
 import { IDisposable } from './types';
-import { disposeAllDisposables } from './helpers';
+import { dispose } from './helpers';
 
 abstract class BaseQuickPickItem implements QuickPickItem {
     label: string;
@@ -85,7 +85,8 @@ export class BaseProviderBasedQuickPick<T extends { id: string }> extends Dispos
         private readonly createErrorQuickPickItem?: (
             error: Error,
             provider: BaseProviderBasedQuickPick<T>
-        ) => QuickPickItem
+        ) => QuickPickItem,
+        private _title?: string
     ) {
         super();
     }
@@ -136,12 +137,14 @@ export class BaseProviderBasedQuickPick<T extends { id: string }> extends Dispos
         quickPick.busy = true;
         quickPick.value = this.previouslyEnteredValue;
         quickPick.onDidChangeValue((e) => (this.previouslyEnteredValue = e), this, disposables);
-        quickPick.onDidHide(() => disposeAllDisposables(disposables), this, disposables);
-        quickPick.title = DataScience.kernelPickerSelectKernelFromRemoteTitleWithoutName;
+        quickPick.onDidHide(() => dispose(disposables), this, disposables);
+        quickPick.title = this._title || DataScience.kernelPickerSelectKernelFromRemoteTitleWithoutName;
         this.provider
             .then((provider) => {
                 this.resolvedProvider = provider;
-                quickPick.title = DataScience.kernelPickerSelectKernelFromRemoteTitle(provider.title);
+                if (!this._title) {
+                    quickPick.title = DataScience.kernelPickerSelectKernelFromRemoteTitle(provider.title);
+                }
                 quickPick.busy = provider.status === 'discovering';
                 provider.onDidChange(() => this.updateQuickPickItems(quickPick, provider), this, disposables);
                 quickPick.onDidTriggerButton(
@@ -149,6 +152,9 @@ export class BaseProviderBasedQuickPick<T extends { id: string }> extends Dispos
                         if (e === refreshButton) {
                             quickPick.busy = true;
                             await provider.refresh().catch(noop);
+                            // Even though items may not have changed, we need to update the quick pick items.
+                            // Possible some information is date bound.
+                            this.updateQuickPickItems(quickPick, provider);
                             quickPick.busy = false;
                         }
                     },
@@ -268,7 +274,7 @@ export class BaseProviderBasedQuickPick<T extends { id: string }> extends Dispos
                 }
                 return result ? result : undefined;
             } finally {
-                disposeAllDisposables(disposables);
+                dispose(disposables);
             }
         }
     }
@@ -281,12 +287,27 @@ export class BaseProviderBasedQuickPick<T extends { id: string }> extends Dispos
                 .map((item) => [item.item.id, item.item])
         );
 
+        const latestItems = new Map(provider.items.map((item) => [item.id, item]));
         // Possible some information has changed, update the quick pick items.
         this.quickPickItems = this.quickPickItems.map((item) => {
             if (this.isSelectorQuickPickItem(item)) {
                 const latestInfo = currentItems.get(item.item.id);
+                // The item is stale, rebuild the quick pick.
                 if (latestInfo && latestInfo !== item.item) {
                     return this.toQuickPickItem(latestInfo);
+                }
+                const latestFromProvider = latestItems.get(item.item.id);
+                if (latestFromProvider) {
+                    const latestQuickPickItem = this.toQuickPickItem(latestFromProvider);
+                    // Item might be the same, but the quick pick details may have changed.
+                    // E.g. we could have a label that is date/time bound.
+                    // When json stringifying, ignore the `item` property as that points to
+                    // the underlying object, and we don't want to compare that (we know the object ref is identical).
+                    if (
+                        JSON.stringify({ ...item, item: '' }) !== JSON.stringify({ ...latestQuickPickItem, item: '' })
+                    ) {
+                        return this.toQuickPickItem(latestFromProvider);
+                    }
                 }
             }
             return item;

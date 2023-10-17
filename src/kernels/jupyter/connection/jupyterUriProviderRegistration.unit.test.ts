@@ -9,15 +9,14 @@ import {
     JupyterUriProviderRegistration,
     REGISTRATION_ID_EXTENSION_OWNER_MEMENTO_KEY
 } from './jupyterUriProviderRegistration';
-import { IJupyterServerUriEntry, IJupyterServerUriStorage } from '../types';
+import { IJupyterServerUriStorage, JupyterServerProviderHandle } from '../types';
 import { IDisposable, IExtensions } from '../../../platform/common/types';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { IJupyterServerUri, IJupyterUriProvider } from '../../../api';
 import { IServiceContainer } from '../../../platform/ioc/types';
 import { Disposable, EventEmitter, Memento, QuickPickItem } from 'vscode';
 import { createEventHandler } from '../../../test/common';
 import { resolvableInstance } from '../../../test/datascience/helpers';
-import { DataScience } from '../../../platform/common/utils/localize';
 use(chaiAsPromised);
 
 suite('Uri Provider Registration', () => {
@@ -27,14 +26,14 @@ suite('Uri Provider Registration', () => {
     let serviceContainer: IServiceContainer;
     let uriStorage: IJupyterServerUriStorage;
     let registration: JupyterUriProviderRegistration;
-    let onDidRemoveServer: EventEmitter<IJupyterServerUriEntry[]>;
+    let onDidRemoveServer: EventEmitter<JupyterServerProviderHandle[]>;
     let clock: fakeTimers.InstalledClock;
     setup(async () => {
         extensions = mock<IExtensions>();
         globalMemento = mock<Memento>();
         serviceContainer = mock<IServiceContainer>();
         uriStorage = mock<IJupyterServerUriStorage>();
-        onDidRemoveServer = new EventEmitter<IJupyterServerUriEntry[]>();
+        onDidRemoveServer = new EventEmitter<JupyterServerProviderHandle[]>();
         when(globalMemento.get(REGISTRATION_ID_EXTENSION_OWNER_MEMENTO_KEY, anything())).thenCall(
             (_, defaultValue) => defaultValue
         );
@@ -48,7 +47,7 @@ suite('Uri Provider Registration', () => {
         registration.activate();
         await clock.runAllAsync();
     });
-    teardown(() => disposeAllDisposables(disposables));
+    teardown(() => dispose(disposables));
     test('No Providers registered', async () => {
         assert.deepEqual(registration.providers, [], 'Providers should be empty');
 
@@ -228,7 +227,7 @@ suite('Uri Provider Registration', () => {
             quickPickItemsForHandle1.map((item) => {
                 return {
                     ...item,
-                    description: DataScience.uriProviderDescriptionFormat(item.description || '', 'a'),
+                    detail: undefined,
                     original: item
                 };
             })
@@ -238,7 +237,7 @@ suite('Uri Provider Registration', () => {
             quickPickItemsForHandle2.map((item) => {
                 return {
                     ...item,
-                    description: DataScience.uriProviderDescriptionFormat(item.description || '', 'ext2'),
+                    detail: undefined,
                     original: item
                 };
             })

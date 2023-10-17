@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { Uri } from 'vscode';
-import { disposeAllDisposables, splitLines, trimQuotes } from '../../../../platform/common/helpers';
+import { dispose, splitLines, trimQuotes } from '../../../../platform/common/helpers';
 import { getDisplayPath } from '../../../../platform/common/platform/fs-paths';
 import { IDisposable } from '../../../../platform/common/types';
 import { traceError, traceInfoIfCI, traceWarning } from '../../../../platform/logging';
@@ -101,8 +101,15 @@ export async function extractRequireConfigFromWidgetEntry(baseUrl: Uri, widgetFo
     // Go through each and extract the key and the value.
     mappings.forEach((mapping) => {
         const parts = mapping.split(':');
-        const key = trimQuotes(parts[0].trim()).trim();
-        const value = trimQuotes(mapping.substring(mapping.indexOf(':') + 1).trim()).trim();
+        // Found in k3d scripts that \\r\\n is gets set, the require config is dynamically injected (with line breaks).
+        const key = trimQuotes(parts[0].replace(/\\r/g, '').replace(/\\n/g, '').trim()).trim();
+        const value = trimQuotes(
+            mapping
+                .substring(mapping.indexOf(':') + 1)
+                .replace(/\\r/g, '')
+                .replace(/\\n/g, '')
+                .trim()
+        ).trim();
         requireConfig[key] = value.startsWith('http') ? Uri.parse(value) : Uri.joinPath(baseUrl, value);
     });
 
@@ -140,7 +147,7 @@ export abstract class BaseIPyWidgetScriptManager implements IIPyWidgetScriptMana
         kernel.onRestarted(this.onKernelRestarted, this, this.disposables);
     }
     public dispose() {
-        disposeAllDisposables(this.disposables);
+        dispose(this.disposables);
     }
     abstract getBaseUrl(): Promise<Uri | undefined>;
     protected abstract getWidgetEntryPoints(): Promise<{ uri: Uri; widgetFolderName: string }[]>;
@@ -175,11 +182,6 @@ export abstract class BaseIPyWidgetScriptManager implements IIPyWidgetScriptMana
                 }
                 traceWarning(message);
             }
-            traceInfoIfCI(
-                `Extracted require.config entry for ${widgetFolderName} from ${getDisplayPath(
-                    script
-                )} for ${baseUrl.toString()} is ${JSON.stringify(config)}`
-            );
             return config;
         } catch (ex) {
             traceError(
@@ -194,8 +196,6 @@ export abstract class BaseIPyWidgetScriptManager implements IIPyWidgetScriptMana
             this.getWidgetEntryPoints(),
             this.getNbExtensionsParentPath()
         ]);
-        traceInfoIfCI(`Widget Entry points = ${JSON.stringify(entryPoints)}`);
-        traceInfoIfCI(`Widget baseUrl = ${baseUrl?.toString()}`);
         if (!baseUrl) {
             return;
         }
@@ -217,7 +217,6 @@ export abstract class BaseIPyWidgetScriptManager implements IIPyWidgetScriptMana
                 )}`
             );
         }
-        traceInfoIfCI(`Widget config = ${JSON.stringify(config)}`);
         sendTelemetryEvent(
             Telemetry.DiscoverIPyWidgetNamesPerf,
             { duration: stopWatch.elapsedTime },

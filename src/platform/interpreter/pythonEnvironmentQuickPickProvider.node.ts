@@ -4,7 +4,7 @@
 import { EventEmitter } from 'vscode';
 import { injectable, inject } from 'inversify';
 import { IQuickPickItemProvider } from '../common/providerBasedQuickPick';
-import { Environment, ProposedExtensionAPI } from '../api/pythonApiTypes';
+import { Environment, PythonExtension } from '@vscode/python-extension';
 import { IExtensionSyncActivationService } from '../activation/types';
 import { IDisposable, IDisposableRegistry } from '../common/types';
 import { PromiseMonitor } from '../common/utils/promises';
@@ -12,19 +12,19 @@ import { IPythonApiProvider, IPythonExtensionChecker } from '../api/types';
 import { traceError } from '../logging';
 import { DataScience } from '../common/utils/localize';
 import { noop } from '../common/utils/misc';
-import { disposeAllDisposables } from '../common/helpers';
+import { dispose } from '../common/helpers';
 
 @injectable()
 export class PythonEnvironmentQuickPickItemProvider
     implements IQuickPickItemProvider<Environment>, IExtensionSyncActivationService
 {
-    title: string = DataScience.quickPickSelectPythonEnvironmentTitle;
+    title: string = DataScience.localPythonEnvironments;
     private _onDidChange = new EventEmitter<void>();
     private _onDidChangeStatus = new EventEmitter<void>();
     onDidChange = this._onDidChange.event;
     onDidChangeStatus = this._onDidChangeStatus.event;
     private refreshedOnceBefore = false;
-    private api?: ProposedExtensionAPI;
+    private api?: PythonExtension;
     private readonly disposables: IDisposable[] = [];
     private readonly promiseMonitor = new PromiseMonitor();
     public get items(): readonly Environment[] {
@@ -60,7 +60,7 @@ export class PythonEnvironmentQuickPickItemProvider
             const apiPromise = api.getNewApi();
             this.promiseMonitor.push(apiPromise);
             apiPromise
-                .then((api?: ProposedExtensionAPI) => {
+                .then((api?: PythonExtension) => {
                     this.api = api;
                     if (!api) {
                         this.status = 'idle';
@@ -92,7 +92,7 @@ export class PythonEnvironmentQuickPickItemProvider
         // perceived performance for the user.
     }
     dispose() {
-        disposeAllDisposables(this.disposables);
+        dispose(this.disposables);
     }
     async refresh() {
         // very unlikely that we have been unable to get the Python extension api, hence no need to wait on the promise.

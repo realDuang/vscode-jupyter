@@ -11,7 +11,7 @@ import { IDisposable } from '../../platform/common/types';
 import { IKernelSocket, INewSessionWithSocket, KernelSocketInformation } from '../types';
 import { noop } from '../../test/core';
 import { BaseJupyterSessionConnection } from './baseJupyterSessionConnection';
-import { disposeAllDisposables } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/helpers';
 import { createEventHandler } from '../../test/common';
 import { KernelConnectionWrapper } from './kernelConnectionWrapper';
 
@@ -105,7 +105,7 @@ suite('Base Jupyter Session Connection', () => {
         jupyterSession = new DummySessionClass(instance(session));
     });
 
-    teardown(() => disposeAllDisposables(disposables));
+    teardown(() => dispose(disposables));
     test('Events are propagated', () => {
         const eventNames: (keyof typeof jupyterSession)[] = [
             'anyMessage',
@@ -152,15 +152,12 @@ suite('Base Jupyter Session Connection', () => {
         jupyterSession.statusChanged.connect((_, args) => statuses.push(args));
         jupyterSession.disposed.connect(() => (disposedEmitted = true));
         const disposed = createEventHandler(jupyterSession, 'onDidDispose', disposables);
-        const statusChanged = createEventHandler(jupyterSession, 'onSessionStatusChanged', disposables);
 
         jupyterSession.dispose();
 
         assert.deepEqual(statuses, ['dead']);
         assert.strictEqual(disposedEmitted, true);
         assert.strictEqual(disposed.count, 1);
-        // This event is deprecated and should no longer be fired.
-        assert.strictEqual(statusChanged.count, 0);
     });
     test('Restarting will restart the underlying kernel', async () => {
         when(kernel.restart()).thenResolve();

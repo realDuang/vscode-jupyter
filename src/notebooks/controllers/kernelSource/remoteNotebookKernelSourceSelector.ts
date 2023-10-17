@@ -31,9 +31,9 @@ import {
     JVSC_EXTENSION_ID,
     JupyterNotebookView
 } from '../../../platform/common/constants';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { IDisposable } from '../../../platform/common/types';
-import { Common, DataScience } from '../../../platform/common/utils/localize';
+import { DataScience } from '../../../platform/common/utils/localize';
 import {
     IMultiStepInput,
     InputFlowAction,
@@ -52,6 +52,7 @@ import { traceError } from '../../../platform/logging';
 import { IRemoteKernelFinderController } from '../../../kernels/jupyter/finder/types';
 import { raceCancellationError } from '../../../platform/common/cancellation';
 import { JupyterServer } from '../../../api';
+import { noop } from '../../../platform/common/utils/misc';
 
 enum KernelFinderEntityQuickPickType {
     KernelFinder = 'finder',
@@ -82,6 +83,9 @@ interface KernelProviderItemsQuickPickItem extends QuickPickItem {
     originalItem: QuickPickItem & { default?: boolean };
 }
 
+function doesExtensionSupportRemovingAServer(extensionId: string) {
+    return extensionId === JVSC_EXTENSION_ID || extensionId === JUPYTER_HUB_EXTENSION_ID;
+}
 // Provides the UI to select a Kernel Source for a given notebook document
 @injectable()
 export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernelSourceSelector {
@@ -127,7 +131,7 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
             }
 
             if (this.cancellationTokenSource.token.isCancellationRequested) {
-                disposeAllDisposables(state.disposables);
+                dispose(state.disposables);
                 return;
             }
 
@@ -136,7 +140,7 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                 return state.selection.connection as RemoteKernelConnectionMetadata;
             }
         } finally {
-            disposeAllDisposables(state.disposables);
+            dispose(state.disposables);
         }
     }
     private async getRemoteServersFromProvider(
@@ -163,7 +167,9 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
             (p) => p.extensionId === provider.extensionId && p.id === provider.id
         )?.serverProvider;
         const serversPromise = serverProvider?.provideJupyterServers
-            ? serverProvider.provideJupyterServers.bind(serverProvider)(token)
+            ? Promise.resolve(serverProvider.provideJupyterServers.bind(serverProvider)(token)).then(
+                  (servers) => servers || []
+              )
             : Promise.resolve([]);
         const handledServerIds = new Set<string>();
         const [jupyterServers] = await Promise.all([
@@ -198,25 +204,49 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
             }
             return (a.time || 0) > (b.time || 0) ? -1 : 1;
         });
-        serversAndTimes.forEach(({ server, time }) => {
-            quickPickServerItems.push({
-                type: KernelFinderEntityQuickPickType.KernelFinder,
-                kernelFinderInfo: server,
-                idAndHandle: server.serverProviderHandle,
-                label: server.displayName,
-                detail: time ? DataScience.jupyterSelectURIMRUDetail(new Date(time)) : undefined,
-                buttons:
-                    serverProvider?.removeJupyterServer &&
-                    (provider.extensionId === JVSC_EXTENSION_ID || provider.extensionId === JUPYTER_HUB_EXTENSION_ID)
-                        ? [
-                              {
-                                  iconPath: new ThemeIcon('close'),
-                                  tooltip: DataScience.removeRemoteJupyterServerEntryInQuickPick
-                              }
-                          ]
-                        : []
+
+        serversAndTimes
+            .filter(({ time }) => (time || 0) > 0)
+            .forEach(({ server, time }) => {
+                quickPickServerItems.push({
+                    type: KernelFinderEntityQuickPickType.KernelFinder,
+                    kernelFinderInfo: server,
+                    idAndHandle: server.serverProviderHandle,
+                    label: server.displayName,
+                    description: time
+                        ? DataScience.jupyterServerLastConnectionForQuickPickDescription(new Date(time))
+                        : undefined,
+                    buttons:
+                        serverProvider?.removeJupyterServer && doesExtensionSupportRemovingAServer(provider.extensionId)
+                            ? [
+                                  {
+                                      iconPath: new ThemeIcon('close'),
+                                      tooltip: DataScience.removeRemoteJupyterServerEntryInQuickPick
+                                  }
+                              ]
+                            : []
+                });
             });
-        });
+
+        serversAndTimes
+            .filter(({ time }) => !time)
+            .forEach(({ server }) => {
+                quickPickServerItems.push({
+                    type: KernelFinderEntityQuickPickType.KernelFinder,
+                    kernelFinderInfo: server,
+                    idAndHandle: server.serverProviderHandle,
+                    label: server.displayName,
+                    buttons:
+                        serverProvider?.removeJupyterServer && doesExtensionSupportRemovingAServer(provider.extensionId)
+                            ? [
+                                  {
+                                      iconPath: new ThemeIcon('close'),
+                                      tooltip: DataScience.removeRemoteJupyterServerEntryInQuickPick
+                                  }
+                              ]
+                            : []
+                });
+            });
 
         // Add servers that we have never seen before.
         jupyterServers
@@ -230,15 +260,14 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                 if (handledServerIds.has(id)) {
                     return;
                 }
+
                 quickPickServerItems.push(<JupyterServerQuickPickItem>{
                     type: KernelFinderEntityQuickPickType.JupyterServer,
                     label: server.label,
                     idAndHandle: { extensionId: provider.extensionId, id: provider.id, handle: server.id },
                     server,
                     buttons:
-                        serverProvider?.removeJupyterServer &&
-                        (provider.extensionId === JVSC_EXTENSION_ID ||
-                            provider.extensionId === JUPYTER_HUB_EXTENSION_ID)
+                        serverProvider?.removeJupyterServer && doesExtensionSupportRemovingAServer(provider.extensionId)
                             ? [
                                   {
                                       iconPath: new ThemeIcon('close'),
@@ -257,14 +286,13 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                         ...i,
                         provider: provider,
                         type: KernelFinderEntityQuickPickType.UriProviderQuickPick,
-                        description: undefined,
                         originalItem: i
                     };
                 }
             );
             if (quickPickServerItems.length > 0 && newProviderItems.length) {
                 quickPickCommandItems.push({
-                    label: Common.labelForQuickPickSeparatorIndicatingThereIsAnotherGroupOfMoreItems,
+                    label: '',
                     kind: QuickPickItemKind.Separator
                 });
             }
@@ -275,8 +303,27 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
         const onDidChangeItems = new EventEmitter<typeof items>();
         let defaultSelection: (typeof items)[0] | undefined =
             items.length === 1 && 'default' in items[0] && items[0].default ? items[0] : undefined;
-        if (serverProvider && items.length === 1) {
-            defaultSelection = items[0];
+        if (serverProvider) {
+            // If the only item is a server, then aut select that.
+            const itemsWithoutSeparators = items.filter((i) => 'type' in i) as (
+                | ContributedKernelFinderQuickPickItem
+                | KernelProviderItemsQuickPickItem
+                | JupyterServerQuickPickItem
+            )[];
+            if (
+                itemsWithoutSeparators.length === 1 &&
+                itemsWithoutSeparators.every((i) => i.type !== KernelFinderEntityQuickPickType.UriProviderQuickPick)
+            ) {
+                defaultSelection = itemsWithoutSeparators[0];
+            } else if (
+                itemsWithoutSeparators.every((i) => i.type === KernelFinderEntityQuickPickType.UriProviderQuickPick) &&
+                itemsWithoutSeparators.filter((i) => i.picked).length === 1
+            ) {
+                // Anyone using the new API must explicitly state the fact that commands are auto selected.
+                // We will auto select a command only if there is one command that has `picked=true`
+                // And if there are no servers.
+                defaultSelection = items.filter((i) => i.picked)[0];
+            }
         }
         let lazyQuickPick:
             | QuickPick<
@@ -308,7 +355,10 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                 >
             >({
                 items: items,
-                placeholder: '',
+                placeholder:
+                    provider.extensionId === JVSC_EXTENSION_ID || provider.extensionId === JUPYTER_HUB_EXTENSION_ID
+                        ? DataScience.enterOrSelectRemoteJupyterPlaceholder
+                        : DataScience.selectRemoteJupyterPlaceholder,
                 title: DataScience.quickPickTitleForSelectionOfJupyterServer,
                 supportBackInFirstStep: true,
                 onDidTriggerItemButton: async (e) => {
@@ -322,10 +372,16 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                         if (
                             serverProvider?.removeJupyterServer &&
                             serverToRemove &&
-                            (provider.extensionId === JVSC_EXTENSION_ID ||
-                                provider.extensionId === JUPYTER_HUB_EXTENSION_ID)
+                            doesExtensionSupportRemovingAServer(provider.extensionId)
                         ) {
                             quickPick.busy = true;
+                            this.serverUriStorage
+                                .remove({
+                                    extensionId: provider.extensionId,
+                                    id: provider.id,
+                                    handle: serverId
+                                })
+                                .catch(noop);
                             await serverProvider.removeJupyterServer(serverToRemove);
                             quickPick.busy = false;
                             // the serverUriStorage should be refreshed after the handle removal
@@ -336,32 +392,29 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                 },
                 onDidChangeItems: onDidChangeItems.event
             });
-            if (provider.extensionId === JVSC_EXTENSION_ID || provider.extensionId === JUPYTER_HUB_EXTENSION_ID) {
-                quickPick.onDidChangeValue(async (e) => {
-                    if (!provider.getQuickPickEntryItems) {
-                        return;
-                    }
-                    const quickPickCommandItems = [];
-                    if (quickPickServerItems.length > 0) {
-                        quickPickCommandItems.push({
-                            label: Common.labelForQuickPickSeparatorIndicatingThereIsAnotherGroupOfMoreItems,
-                            kind: QuickPickItemKind.Separator
-                        });
-                    }
-
-                    const commands = await provider.getQuickPickEntryItems(e);
-                    const newProviderItems: KernelProviderItemsQuickPickItem[] = commands.map((i) => {
-                        return {
-                            ...i,
-                            provider: provider,
-                            type: KernelFinderEntityQuickPickType.UriProviderQuickPick,
-                            description: undefined,
-                            originalItem: i
-                        };
+            quickPick.onDidChangeValue(async (e) => {
+                if (!provider.getQuickPickEntryItems) {
+                    return;
+                }
+                const quickPickCommandItems: QuickPickItem[] = [];
+                if (quickPickServerItems.length > 0) {
+                    quickPickCommandItems.push({
+                        label: '',
+                        kind: QuickPickItemKind.Separator
                     });
-                    quickPick.items = quickPickServerItems.concat(quickPickCommandItems).concat(newProviderItems);
-                }, this);
-            }
+                }
+
+                const commands = await provider.getQuickPickEntryItems(e);
+                const newProviderItems: KernelProviderItemsQuickPickItem[] = commands.map((i) => {
+                    return {
+                        ...i,
+                        provider: provider,
+                        type: KernelFinderEntityQuickPickType.UriProviderQuickPick,
+                        originalItem: i
+                    };
+                });
+                quickPick.items = quickPickServerItems.concat(quickPickCommandItems).concat(newProviderItems);
+            }, this);
             lazyQuickPick = quickPick;
             selectedSource = await selection;
         }
@@ -379,6 +432,9 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                         token
                     ).catch((ex) => traceError(`Failed to select a kernel`, ex));
                     if (result && result === InputFlowAction.back) {
+                        if (selectedSource === defaultSelection) {
+                            throw InputFlowAction.back;
+                        }
                         return this.getRemoteServersFromProvider(provider, token, multiStep, state);
                     }
                     if (!result || result instanceof InputFlowAction) {
@@ -405,6 +461,9 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
                         (ex) => traceError(`Failed to select a kernel`, ex)
                     );
                     if (result && result === InputFlowAction.back) {
+                        if (selectedSource === defaultSelection) {
+                            throw InputFlowAction.back;
+                        }
                         return this.getRemoteServersFromProvider(provider, token, multiStep, state);
                     }
                     if (!result || result instanceof InputFlowAction) {
@@ -478,7 +537,12 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
             traceError(`Failed to select a kernel`, ex)
         );
         if (result && result === InputFlowAction.back) {
-            return this.selectRemoteServerFromRemoteKernelFinder(selectedSource, state, token);
+            // Do not go back to the previous command,
+            // We have no idea whta the previous command in the 3rd party extension does,
+            // Its possible we start a server, or make some http request or the like.
+            // Thus implicitly calling the action on the command is wrong, instead the user must chose this operation.
+            // return this.selectRemoteServerFromRemoteKernelFinder(selectedSource, state, token);
+            throw InputFlowAction.back;
         }
         if (!result || result instanceof InputFlowAction) {
             throw new CancellationError();
@@ -491,10 +555,12 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
         source: Promise<IRemoteKernelFinder>,
         token: CancellationToken
     ) {
+        let recommended: RemoteKernelConnectionMetadata | undefined;
         const quickPickFactory = (item: KernelConnectionMetadata) => {
             const displayData = this.displayDataProvider.getDisplayData(item);
+            const prefix = item === recommended ? '$(star-full) ' : '';
             return <QuickPickItem>{
-                label: displayData.label,
+                label: `${prefix}${displayData.label}`,
                 description: displayData.description,
                 detail: displayData.detail
             };
@@ -518,7 +584,13 @@ export class RemoteNotebookKernelSourceSelector implements IRemoteNotebookKernel
         const preferred = new PreferredKernelConnectionService(this.jupyterConnection);
         source
             .then((source) => preferred.findPreferredRemoteKernelConnection(notebook, source, token))
-            .then((item) => (remoteKernelPicker.selected = item))
+            .then((item) => {
+                recommended = item;
+                if (item?.kind === 'startUsingRemoteKernelSpec') {
+                    remoteKernelPicker.recommended = item;
+                }
+                remoteKernelPicker.selected = item;
+            })
             .catch((ex) => traceError(`Failed to determine preferred remote kernel`, ex));
         return remoteKernelPicker.selectItem(token);
     }

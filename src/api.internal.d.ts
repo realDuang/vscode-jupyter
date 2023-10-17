@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { CancellationToken, Event, QuickPickItem, Uri } from 'vscode';
+import type { Event, QuickPickItem, Uri } from 'vscode';
 
 // These types are only used internally within the extension.
 // Never to be exposed to other extensions.
@@ -17,24 +17,11 @@ declare module './api' {
          * Used internally by Jupyter Extension to detect changes to the JupyterServerProvider.
          */
         onDidChangeProvider: Event<void>;
-    }
-    export interface JupyterServerProvider {
         /**
-         * Display a `trash` icon next to each server in the quick pick.
-         * Allowing the user to remove this server.
-         * Currently used only by the Jupyter Extension.
-         * A better more generic way to deal with this would be via commands.
+         * Used internal by Jupyter extension to tarck the Server Provider.
          */
-        removeJupyterServer?(server: JupyterServer): Promise<void>;
+        readonly serverProvider: JupyterServerProvider;
     }
-    export interface JupyterServerCommandProvider {
-        /**
-         * Returns a list of commands to be displayed to the user.
-         * @param value The value entered by the user in the quick pick.
-         */
-        provideCommands(value: string, token: CancellationToken): Promise<JupyterServerCommand[]>;
-    }
-
     export interface IJupyterUriProvider {
         /**
          * Internal cache of the Jupyter Servers, providing sync access to the servers.

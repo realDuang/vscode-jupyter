@@ -3,6 +3,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import * as sinon from 'sinon';
 import type { Session } from '@jupyterlab/services';
 import { assert } from 'chai';
 import { anything, instance, mock, verify, when } from 'ts-mockito';
@@ -18,32 +19,30 @@ import {
     LiveRemoteKernelConnectionMetadata,
     RemoteKernelSpecConnectionMetadata
 } from '../../types';
-import { JupyterSessionManager } from '../session/jupyterSessionManager';
-import { JupyterSessionManagerFactory } from '../session/jupyterSessionManagerFactory';
-import { IJupyterKernel, IJupyterRemoteCachedKernelValidator, IJupyterSessionManager } from '../types';
+import { IJupyterKernel, IJupyterRemoteCachedKernelValidator } from '../types';
 import { KernelFinder } from '../../kernelFinder';
 import { IApplicationEnvironment } from '../../../platform/common/application/types';
 import { IExtensionContext } from '../../../platform/common/types';
 import { createEventHandler, TestEventHandler } from '../../../test/common';
 import { CacheDataFormat, RemoteKernelFinder } from './remoteKernelFinder';
 import { JupyterConnection } from '../connection/jupyterConnection';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { generateIdFromRemoteProvider } from '../jupyterUtils';
 import { IFileSystem } from '../../../platform/common/platform/types';
-import { uriEquals } from '../../../test/datascience/helpers';
+import { resolvableInstance, uriEquals } from '../../../test/datascience/helpers';
 import { RemoteKernelSpecCacheFileName } from '../constants';
+import { JupyterLabHelper } from '../session/jupyterLabHelper';
 
 suite(`Remote Kernel Finder`, () => {
     let disposables: Disposable[] = [];
     let remoteKernelFinder: RemoteKernelFinder;
     let kernelFinder: KernelFinder;
     let fs: IFileSystem;
-    let jupyterSessionManager: IJupyterSessionManager;
+    let jupyterSessionManager: JupyterLabHelper;
     let cachedRemoteKernelValidator: IJupyterRemoteCachedKernelValidator;
     let kernelsChanged: TestEventHandler<void>;
     let jupyterConnection: JupyterConnection;
     const connInfo: IJupyterConnection = {
-        localLaunch: false,
         baseUrl: 'http://foobar',
         displayName: 'foobar connection',
         token: '',
@@ -51,7 +50,8 @@ suite(`Remote Kernel Finder`, () => {
         hostName: 'foobar',
         rootDirectory: Uri.file('.'),
         dispose: noop,
-        serverProviderHandle: { handle: 'handle', id: 'id', extensionId: '' }
+        serverProviderHandle: { handle: 'handle', id: 'id', extensionId: '' },
+        settings: {} as any
     };
     const defaultPython3Name = 'python3';
     const python3spec: IJupyterKernelSpec = {
@@ -123,10 +123,9 @@ suite(`Remote Kernel Finder`, () => {
         when(crypto.createHash(anything(), anything())).thenCall((d, _c) => {
             return Promise.resolve(d.toLowerCase());
         });
-        jupyterSessionManager = mock(JupyterSessionManager);
+        jupyterSessionManager = mock<JupyterLabHelper>();
         when(jupyterSessionManager.dispose()).thenResolve();
-        const jupyterSessionManagerFactory = mock(JupyterSessionManagerFactory);
-        when(jupyterSessionManagerFactory.create(anything())).thenResolve(instance(jupyterSessionManager));
+        sinon.stub(JupyterLabHelper, 'create').callsFake(() => resolvableInstance(jupyterSessionManager));
         when(fs.delete(anything())).thenResolve();
         when(fs.createDirectory(uriEquals(globalStorageUri))).thenResolve();
         when(fs.exists(anything())).thenResolve(true);
@@ -153,7 +152,6 @@ suite(`Remote Kernel Finder`, () => {
         remoteKernelFinder = new RemoteKernelFinder(
             'currentremote',
             'Local Kernels',
-            instance(jupyterSessionManagerFactory),
             instance(env),
             instance(cachedRemoteKernelValidator),
             kernelFinder,
@@ -164,7 +162,10 @@ suite(`Remote Kernel Finder`, () => {
             instance(context)
         );
     });
-    teardown(() => disposeAllDisposables(disposables));
+    teardown(() => {
+        sinon.restore();
+        dispose(disposables);
+    });
     test('Kernels found', async () => {
         remoteKernelFinder.activate().then(noop, noop);
 

@@ -17,7 +17,6 @@ import { JupyterInterpreterSubCommandExecutionService } from './interpreter/jupy
 import { NbConvertExportToPythonService } from './interpreter/nbconvertExportToPythonService.node';
 import { NbConvertInterpreterDependencyChecker } from './interpreter/nbconvertInterpreterDependencyChecker.node';
 import { JupyterConnection } from './connection/jupyterConnection';
-import { JupyterDetectionTelemetry } from './jupyterDetectionTelemetry.node';
 import { JupyterKernelService } from './session/jupyterKernelService.node';
 import { JupyterRemoteCachedKernelValidator } from './connection/jupyterRemoteCachedKernelValidator';
 import { JupyterUriProviderRegistration } from './connection/jupyterUriProviderRegistration';
@@ -29,19 +28,15 @@ import { JupyterServerStarter } from './launcher/jupyterServerStarter.node';
 import { JupyterServerUriStorage } from './connection/serverUriStorage';
 import { LiveRemoteKernelConnectionUsageTracker } from './connection/liveRemoteKernelConnectionTracker';
 import { JupyterServerSelector } from './connection/serverSelector';
-import { BackingFileCreator } from './session/backingFileCreator.node';
 import { JupyterRequestCreator } from './session/jupyterRequestCreator.node';
-import { JupyterSessionManagerFactory } from './session/jupyterSessionManagerFactory';
 import { RequestAgentCreator } from './session/requestAgentCreator.node';
 import {
-    IOldJupyterSessionManagerFactory,
     INbConvertInterpreterDependencyChecker,
     INbConvertExportToPythonService,
     IJupyterServerProvider,
     IJupyterInterpreterDependencyManager,
     IJupyterUriProviderRegistration,
     IJupyterServerUriStorage,
-    IJupyterBackingFileCreator,
     IJupyterKernelService,
     INotebookStarter,
     IJupyterRequestCreator,
@@ -54,7 +49,6 @@ import {
 import { IJupyterCommandFactory, IJupyterSubCommandExecutionService } from './types.node';
 import { RemoteKernelFinderController } from './finder/remoteKernelFinderController';
 import { KernelSessionFactory } from '../common/kernelSessionFactory';
-import { OldJupyterKernelSessionFactory } from './session/oldJupyterKernelSessionFactory';
 import { JupyterKernelSessionFactory } from './session/jupyterKernelSessionFactory';
 import { JupyterServerProviderRegistry } from './connection/jupyterServerProviderRegistry';
 import { IRemoteKernelFinderController } from './finder/types';
@@ -70,10 +64,6 @@ export function registerTypes(serviceManager: IServiceManager, _isDevMode: boole
         MigrateJupyterInterpreterStateService
     );
     serviceManager.addSingleton<IJupyterServerHelper>(IJupyterServerHelper, JupyterServerHelper);
-    serviceManager.addSingleton<IOldJupyterSessionManagerFactory>(
-        IOldJupyterSessionManagerFactory,
-        JupyterSessionManagerFactory
-    );
     serviceManager.addSingleton<JupyterCommandLineSelector>(JupyterCommandLineSelector, JupyterCommandLineSelector);
     serviceManager.addSingleton<JupyterInterpreterDependencyService>(
         JupyterInterpreterDependencyService,
@@ -113,12 +103,7 @@ export function registerTypes(serviceManager: IServiceManager, _isDevMode: boole
     serviceManager.addSingleton<INotebookStarter>(INotebookStarter, JupyterServerStarter);
     serviceManager.addSingleton<IJupyterServerConnector>(IJupyterServerConnector, JupyterServerConnector);
     serviceManager.addSingleton<IKernelSessionFactory>(IKernelSessionFactory, KernelSessionFactory);
-    serviceManager.addSingleton<OldJupyterKernelSessionFactory>(
-        OldJupyterKernelSessionFactory,
-        OldJupyterKernelSessionFactory
-    );
     serviceManager.addSingleton<JupyterKernelSessionFactory>(JupyterKernelSessionFactory, JupyterKernelSessionFactory);
-    serviceManager.addSingleton<IJupyterBackingFileCreator>(IJupyterBackingFileCreator, BackingFileCreator);
     serviceManager.addSingleton<IJupyterRequestCreator>(IJupyterRequestCreator, JupyterRequestCreator);
     serviceManager.addSingleton<IJupyterRequestAgentCreator>(IJupyterRequestAgentCreator, RequestAgentCreator);
     serviceManager.addSingleton<JupyterConnection>(JupyterConnection, JupyterConnection);
@@ -131,7 +116,6 @@ export function registerTypes(serviceManager: IServiceManager, _isDevMode: boole
         IJupyterRemoteCachedKernelValidator,
         JupyterRemoteCachedKernelValidator
     );
-    serviceManager.addSingleton<JupyterDetectionTelemetry>(IExtensionSyncActivationService, JupyterDetectionTelemetry);
     serviceManager.addSingleton<IDataScienceErrorHandler>(IDataScienceErrorHandler, DataScienceErrorHandlerNode);
     serviceManager.addSingleton<IRemoteKernelFinderController>(
         IRemoteKernelFinderController,

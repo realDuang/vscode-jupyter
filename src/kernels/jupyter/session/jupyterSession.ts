@@ -23,7 +23,7 @@ import * as path from '../../../platform/vscode-path/resources';
 import { getResourceType } from '../../../platform/common/utils';
 import { waitForIdleOnSession } from '../../common/helpers';
 import { BaseJupyterSessionConnection } from '../../common/baseJupyterSessionConnection';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 
 export class JupyterSessionWrapper
     extends BaseJupyterSessionConnection<INewSessionWithSocket, 'localJupyter' | 'remoteJupyter'>
@@ -50,11 +50,10 @@ export class JupyterSessionWrapper
         private readonly resource: Resource,
         private readonly kernelConnectionMetadata: KernelConnectionMetadata,
         public readonly workingDirectory: Uri,
-        connection: IJupyterConnection,
         private readonly kernelService: IJupyterKernelService | undefined,
         private readonly creator: KernelActionSource
     ) {
-        super(connection.localLaunch ? 'localJupyter' : 'remoteJupyter', session);
+        super(isLocalConnection(kernelConnectionMetadata) ? 'localJupyter' : 'remoteJupyter', session);
         this.initializeKernelSocket();
     }
 
@@ -88,7 +87,7 @@ export class JupyterSessionWrapper
             await this.validateLocalKernelDependencies(token.token, ui);
             await super.restart();
         } finally {
-            disposeAllDisposables(disposables);
+            dispose(disposables);
         }
     }
     private async validateLocalKernelDependencies(token: CancellationToken, ui: DisplayOptions) {

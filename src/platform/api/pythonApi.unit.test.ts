@@ -7,7 +7,7 @@ import { anything, instance, mock, verify, when } from 'ts-mockito';
 import { Disposable, EventEmitter, WorkspaceFoldersChangeEvent } from 'vscode';
 import { createEventHandler } from '../../test/common';
 import { IWorkspaceService } from '../common/application/types';
-import { disposeAllDisposables } from '../common/helpers';
+import { dispose } from '../common/helpers';
 import { IDisposable, IExtensionContext } from '../common/types';
 import { IInterpreterService } from '../interpreter/contracts';
 import { InterpreterService } from './pythonApi';
@@ -15,8 +15,8 @@ import {
     ActiveEnvironmentPathChangeEvent,
     EnvironmentsChangeEvent,
     EnvironmentVariablesChangeEvent,
-    ProposedExtensionAPI
-} from './pythonApiTypes';
+    PythonExtension
+} from '@vscode/python-extension';
 import { IPythonApiProvider, IPythonExtensionChecker } from './types';
 
 suite(`Interpreter Service`, () => {
@@ -32,8 +32,8 @@ suite(`Interpreter Service`, () => {
     let onDidChangeActiveEnvironmentPath: EventEmitter<ActiveEnvironmentPathChangeEvent>;
     let onDidChangeEnvironments: EventEmitter<EnvironmentsChangeEvent>;
     let onDidEnvironmentVariablesChange: EventEmitter<EnvironmentVariablesChangeEvent>;
-    let newPythonApi: ProposedExtensionAPI;
-    let environments: ProposedExtensionAPI['environments'];
+    let newPythonApi: PythonExtension;
+    let environments: PythonExtension['environments'];
     setup(() => {
         interpreterService = mock<IInterpreterService>();
         apiProvider = mock<IPythonApiProvider>();
@@ -51,8 +51,8 @@ suite(`Interpreter Service`, () => {
         disposables.push(onDidChangeEnvironments);
         disposables.push(onDidEnvironmentVariablesChange);
 
-        newPythonApi = mock<ProposedExtensionAPI>();
-        environments = mock<ProposedExtensionAPI['environments']>();
+        newPythonApi = mock<PythonExtension>();
+        environments = mock<PythonExtension['environments']>();
         when(newPythonApi.environments).thenReturn(instance(environments));
         when(environments.onDidChangeActiveEnvironmentPath).thenReturn(onDidChangeActiveEnvironmentPath.event);
         when(environments.onDidChangeEnvironments).thenReturn(onDidChangeEnvironments.event);
@@ -67,7 +67,7 @@ suite(`Interpreter Service`, () => {
         clock = fakeTimers.install();
         disposables.push(new Disposable(() => clock.uninstall()));
     });
-    teardown(() => disposeAllDisposables(disposables));
+    teardown(() => dispose(disposables));
     function createInterpreterService() {
         interpreterService = new InterpreterService(
             instance(apiProvider),

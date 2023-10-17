@@ -1,15 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-import { CancellationToken, Disposable, Event, NotebookController, NotebookDocument, QuickPickItem, Uri } from 'vscode';
+import type {
+    CancellationToken,
+    Disposable,
+    Event,
+    NotebookController,
+    NotebookDocument,
+    QuickPickItem,
+    Uri
+} from 'vscode';
 import type { Kernel } from '@jupyterlab/services/lib/kernel';
 import type { Session } from '@jupyterlab/services';
-import { IDataViewerDataProvider } from './webviews/extension-side/dataviewer/types';
+import type { IDataViewerDataProvider } from './webviews/extension-side/dataviewer/types';
 
 declare module './api' {
-    export interface JupyterAPI {
+    export interface Jupyter {
         /**
          * Promise indicating whether all parts of the extension have completed loading or not.
          * @type {Promise<void>}
@@ -90,6 +96,14 @@ declare module './api' {
          * Note: The client side npm package @jupyterlab/services uses WebSockets to connect to remote Kernels.
          */
         webSocketProtocols?: string[];
+        /**
+         * The `fetch` method to use.
+         */
+        readonly fetch?: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
+        /**
+         * The `WebSocket` object constructor.
+         */
+        readonly WebSocket?: typeof WebSocket;
     }
 
     export interface IJupyterUriProvider {

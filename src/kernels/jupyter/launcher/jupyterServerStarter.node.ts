@@ -9,16 +9,14 @@ import uuid from 'uuid/v4';
 import { CancellationToken, Uri } from 'vscode';
 import { Cancellation, isCancellationError, raceCancellationError } from '../../../platform/common/cancellation';
 import { JUPYTER_OUTPUT_CHANNEL } from '../../../platform/common/constants';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { traceInfo, traceError, traceVerbose } from '../../../platform/logging';
 import { IFileSystem, TemporaryDirectory } from '../../../platform/common/platform/types';
 import { IDisposable, IOutputChannel, Resource } from '../../../platform/common/types';
 import { DataScience } from '../../../platform/common/utils/localize';
-import { StopWatch } from '../../../platform/common/utils/stopWatch';
 import { JupyterConnectError } from '../../../platform/errors/jupyterConnectError';
 import { JupyterInstallError } from '../../../platform/errors/jupyterInstallError';
 import { IServiceContainer } from '../../../platform/ioc/types';
-import { sendTelemetryEvent, Telemetry } from '../../../telemetry';
 import { JupyterConnectionWaiter } from './jupyterConnectionWaiter.node';
 import { WrappedError } from '../../../platform/errors/types';
 import { KernelProgressReporter } from '../../../platform/progress/kernelProgressReporter';
@@ -72,7 +70,6 @@ export class JupyterServerStarter implements IJupyterServerStarter {
         let exitCode: number | null = 0;
         let starter: JupyterConnectionWaiter | undefined;
         const disposables: IDisposable[] = [];
-        const stopWatch = new StopWatch();
         const progress = KernelProgressReporter.reportProgress(resource, ReportableAction.NotebookStart);
         try {
             // Generate a temp dir with a unique GUID, both to match up our started server and to easily clean up after
@@ -104,12 +101,7 @@ export class JupyterServerStarter implements IJupyterServerStarter {
             // Watch for premature exits
             if (launchResult.proc) {
                 launchResult.proc.on('exit', (c: number | null) => (exitCode = c));
-                launchResult.out.subscribe((out) => {
-                    if (out.out.includes('Uncaught exception in ZMQStream callback')) {
-                        sendTelemetryEvent(Telemetry.JupyterServerZMQStreamError);
-                    }
-                    this.jupyterOutputChannel.append(out.out);
-                });
+                launchResult.out.subscribe((out) => this.jupyterOutputChannel.append(out.out));
             }
 
             // Make sure this process gets cleaned up. We might be canceled before the connection finishes.
@@ -148,11 +140,10 @@ export class JupyterServerStarter implements IJupyterServerStarter {
             } catch (ex) {
                 traceError(`Parsing failed ${connection.baseUrl}`, ex);
             }
-            disposeAllDisposables(disposables);
-            sendTelemetryEvent(Telemetry.StartJupyter, { duration: stopWatch.elapsedTime });
+            dispose(disposables);
             return connection;
         } catch (err) {
-            disposeAllDisposables(disposables);
+            dispose(disposables);
             if (
                 isCancellationError(err) ||
                 err instanceof JupyterConnectError ||

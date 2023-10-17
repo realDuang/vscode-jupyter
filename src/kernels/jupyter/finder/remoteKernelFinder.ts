@@ -14,12 +14,7 @@ import {
     RemoteKernelSpecConnectionMetadata
 } from '../../types';
 import { IAsyncDisposable, IDisposable, IExtensionContext } from '../../../platform/common/types';
-import {
-    IOldJupyterSessionManagerFactory,
-    IJupyterRemoteCachedKernelValidator,
-    IRemoteKernelFinder,
-    JupyterServerProviderHandle
-} from '../types';
+import { IJupyterRemoteCachedKernelValidator, IRemoteKernelFinder, JupyterServerProviderHandle } from '../types';
 import { sendKernelSpecTelemetry } from '../../raw/finder/helper';
 import { traceError, traceWarning, traceInfoIfCI, traceVerbose } from '../../../platform/logging';
 import { raceCancellation } from '../../../platform/common/cancellation';
@@ -27,7 +22,7 @@ import { areObjectsWithUrisTheSame, noop } from '../../../platform/common/utils/
 import { IApplicationEnvironment } from '../../../platform/common/application/types';
 import { KernelFinder } from '../../kernelFinder';
 import { ContributedKernelFinderKind } from '../../internalTypes';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { PromiseMonitor } from '../../../platform/common/utils/promises';
 import { getDisplayPath } from '../../../platform/common/platform/fs-paths';
 import { JupyterConnection } from '../connection/jupyterConnection';
@@ -37,6 +32,7 @@ import { isUnitTestExecution } from '../../../platform/common/constants';
 import { IFileSystem } from '../../../platform/common/platform/types';
 import { computeServerId, generateIdFromRemoteProvider } from '../jupyterUtils';
 import { RemoteKernelSpecCacheFileName } from '../constants';
+import { JupyterLabHelper } from '../session/jupyterLabHelper';
 
 // Even after shutting down a kernel, the server API still returns the old information.
 // Re-query after 2 seconds to ensure we don't get stale information.
@@ -89,6 +85,7 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
 
     private readonly cacheKey: string;
     private readonly cacheFile: Uri;
+    private cachedConnection?: Promise<IJupyterConnection | undefined>;
 
     /**
      *
@@ -106,7 +103,6 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
     constructor(
         readonly id: string,
         readonly displayName: string,
-        private jupyterSessionManagerFactory: IOldJupyterSessionManagerFactory,
         private readonly env: IApplicationEnvironment,
         private readonly cachedRemoteKernelValidator: IJupyterRemoteCachedKernelValidator,
         kernelFinder: KernelFinder,
@@ -134,7 +130,7 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             clearTimeout(this.kernelDisposeDelayTimer as any);
         }
-        disposeAllDisposables(this.disposables);
+        dispose(this.disposables);
     }
 
     async activate(): Promise<void> {
@@ -188,6 +184,27 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
         // Display a progress indicator only when user refreshes the list.
         await this.loadCache(true, true);
     }
+    private getListOfKernelsWithCachedConnection(
+        displayProgress: boolean,
+        ignoreCache: boolean = false
+    ): Promise<RemoteKernelConnectionMetadata[]> {
+        const usingCache = !!this.cachedConnection;
+        this.cachedConnection = this.cachedConnection || this.getRemoteConnectionInfo(displayProgress);
+        return this.cachedConnection
+            .then((connInfo) => {
+                if (connInfo && !usingCache) {
+                    this.cachedConnection = Promise.resolve(connInfo);
+                }
+                return connInfo ? this.listKernelsFromConnection(connInfo) : Promise.resolve([]);
+            })
+            .catch((ex) => {
+                if (usingCache) {
+                    return this.getListOfKernelsWithCachedConnection(displayProgress, ignoreCache);
+                }
+                this.cachedConnection = undefined;
+                return Promise.reject(ex);
+            });
+    }
 
     public async loadCache(ignoreCache: boolean = false, displayProgress: boolean = false): Promise<void> {
         traceInfoIfCI(`Remote Kernel Finder load cache Server: ${this.id}`);
@@ -208,12 +225,7 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
                 this.loadCache(true).then(noop, noop);
             } else {
                 try {
-                    const kernelsWithoutCachePromise = (async () => {
-                        const connInfo = await this.getRemoteConnectionInfo(displayProgress);
-                        return connInfo ? this.listKernelsFromConnection(connInfo) : Promise.resolve([]);
-                    })();
-
-                    kernels = await kernelsWithoutCachePromise;
+                    kernels = await this.getListOfKernelsWithCachedConnection(displayProgress);
                     this._lastError = undefined;
                 } catch (ex) {
                     // CancellationError is when user cancels the request, no need to log errors related to that.
@@ -239,12 +251,7 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
             this._cacheUpdateCancelTokenSource = updateCacheCancellationToken;
 
             try {
-                const kernelsWithoutCachePromise = (async () => {
-                    const connInfo = await this.getRemoteConnectionInfo(false);
-                    return connInfo ? this.listKernelsFromConnection(connInfo) : Promise.resolve([]);
-                })();
-
-                kernels = await kernelsWithoutCachePromise;
+                kernels = await this.getListOfKernelsWithCachedConnection(false);
             } catch (ex) {
                 traceWarning(`Could not fetch kernels from the ${this.kind} server, falling back to cache: ${ex}`);
                 // Since fetching the remote kernels failed, we fall back to the cache,
@@ -272,7 +279,7 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
         }
         return this.jupyterConnection
             .createConnectionInfo(this.serverProviderHandle)
-            .finally(() => disposeAllDisposables(disposables));
+            .finally(() => dispose(disposables));
     }
 
     private async getFromCache(cancelToken?: CancellationToken): Promise<RemoteKernelConnectionMetadata[]> {
@@ -325,7 +332,7 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
     public async listKernelsFromConnection(connInfo: IJupyterConnection): Promise<RemoteKernelConnectionMetadata[]> {
         const disposables: IAsyncDisposable[] = [];
         try {
-            const sessionManager = await this.jupyterSessionManagerFactory.create(connInfo);
+            const sessionManager = JupyterLabHelper.create(connInfo.settings);
             disposables.push(sessionManager);
 
             // Get running and specs at the same time
@@ -395,15 +402,30 @@ export class RemoteKernelFinder implements IRemoteKernelFinder, IDisposable {
 
             const oldValues = this.cache;
             const oldKernels = new Map(oldValues.map((item) => [item.id, item]));
-            const kernels = new Map(values.map((item) => [item.id, item]));
+            const latestValidKernels = new Map(values.map((item) => [item.id, item]));
             const added = values.filter((k) => !oldKernels.has(k.id));
             const updated = values.filter(
                 (k) => oldKernels.has(k.id) && !areObjectsWithUrisTheSame(k, oldKernels.get(k.id))
             );
-            const removed = oldValues.filter((k) => !kernels.has(k.id));
+            const removed = oldValues.filter((k) => !latestValidKernels.has(k.id));
 
             const key = this.cacheKey;
-            this.cache = values;
+            // Always keep a single object in memory, so that we can use the same object everywhere and know
+            // that it will be upto date.
+            this.cache = oldValues.filter((k) => latestValidKernels.has(k.id)).concat(added);
+
+            // Now update the objects in place.
+            this.cache.forEach((kernel) => {
+                const latestKernel = latestValidKernels.get(kernel.id)!;
+                if (kernel === latestKernel) {
+                    // same object ref, that means this is not really an old item.
+                    return;
+                }
+                if (latestKernel.kind === 'connectToLiveRemoteKernel' && kernel.kind === 'connectToLiveRemoteKernel') {
+                    // Update the model in place, now we have basically a singleton for each connection.
+                    kernel.updateModel(latestKernel.kernelModel);
+                }
+            });
             const serialized = values.map((item) => item.toJSON());
             let currentData: CacheDataFormat = { extensionVersion: this.env.extensionVersion, data: {} };
             try {

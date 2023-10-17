@@ -12,15 +12,15 @@ import {
 import { DataScience } from '../../platform/common/utils/localize';
 import { noop } from '../../platform/common/utils/misc';
 import { IMultiStepInputFactory, IMultiStepInput } from '../../platform/common/utils/multiStepInput';
-import { traceWarning } from '../../platform/logging';
+import { traceVerbose, traceWarning } from '../../platform/logging';
 import { sendTelemetryEvent, Telemetry } from '../../telemetry';
 import {
     IJupyterRequestAgentCreator,
     IJupyterRequestCreator,
-    IJupyterServerUriEntry,
-    IJupyterServerUriStorage
+    IJupyterServerUriStorage,
+    JupyterServerProviderHandle
 } from '../../kernels/jupyter/types';
-import { disposeAllDisposables } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/helpers';
 
 export interface IJupyterPasswordConnectInfo {
     requiresPassword: boolean;
@@ -46,7 +46,7 @@ export class JupyterHubPasswordConnect {
         private readonly disposables: IDisposableRegistry
     ) {
         // Sign up to see if servers are removed from our uri storage list
-        this.serverUriStorage.onDidRemove(this.onDidRemoveUris, this, this.disposables);
+        this.serverUriStorage.onDidRemove(this.onDidRemoveServers, this, this.disposables);
     }
     public async getPasswordConnectionInfo(options: {
         url: string;
@@ -83,7 +83,7 @@ export class JupyterHubPasswordConnect {
             result
                 .finally(() => {
                     if (disposeOnDone) {
-                        disposeAllDisposables(disposables);
+                        dispose(disposables);
                     }
                 })
                 .catch(noop);
@@ -93,23 +93,43 @@ export class JupyterHubPasswordConnect {
         return result;
     }
     public async isJupyterHub(url: string): Promise<boolean> {
-        // See this for the different REST endpoints:
-        // https://jupyterhub.readthedocs.io/en/stable/_static/rest-api/index.html
+        try {
+            // See this for the different REST endpoints:
+            // https://jupyterhub.readthedocs.io/en/stable/_static/rest-api/index.html
 
-        // If the URL has the /user/ option in it, it's likely this is jupyter hub
-        if (url.toLowerCase().includes('/user/')) {
-            return true;
+            // If we have a token, then user is just connecting to a jupyter server (even if it may be on jupyterhub)
+            if (url.toLowerCase().includes('/user/') && url.includes('token=')) {
+                return false;
+            }
+            // If the URL has the /user/ option in it, it's likely this is jupyter hub
+            if (url.toLowerCase().includes('/user/') && !url.includes('token=')) {
+                return true;
+            }
+
+            // Otherwise request hub/api. This should return the json with the hub version
+            // if this is a hub url
+            const response = await this.makeRequest(new URL('hub/api', addTrailingSlash(url)).toString(), {
+                method: 'get'
+            });
+            // Assume we are at the login page for jupyterlab, which means we're not a jupyter hub
+            // Sending this request with the /hub/api appended, still ends up going to the same loging page.
+            // Hence status of 200 check is not sufficient.
+            if (response.status !== 200) {
+                return false;
+            }
+            // Ensure we get a valid JSON with a version in it.
+            try {
+                const json = await response.json();
+                traceVerbose(`JupyterHub version is ${json && json.version} for url ${url}`);
+                return json && json.version;
+            } catch {
+                //
+            }
+            return false;
+        } catch (ex) {
+            traceVerbose(`Error in detecting whether url is isJupyterHub: ${ex}`);
+            return false;
         }
-
-        // Otherwise request hub/api. This should return the json with the hub version
-        // if this is a hub url
-        const response = await this.makeRequest(`${url}hub/api`, {
-            method: 'get',
-            redirect: 'manual',
-            headers: { Connection: 'keep-alive' }
-        });
-
-        return response.status === 200;
     }
 
     private async getJupyterHubConnectionInfo(
@@ -407,10 +427,10 @@ export class JupyterHubPasswordConnect {
     /**
      * When URIs are removed from the server list also remove them from
      */
-    private onDidRemoveUris(uriEntries: IJupyterServerUriEntry[]) {
-        uriEntries.forEach((uriEntry) => {
-            if (uriEntry.provider.id.startsWith('_builtin')) {
-                this.savedConnectInfo.delete(uriEntry.provider.handle);
+    private onDidRemoveServers(servers: JupyterServerProviderHandle[]) {
+        servers.forEach((server) => {
+            if (server.id.startsWith('_builtin')) {
+                this.savedConnectInfo.delete(server.handle);
             }
         });
     }

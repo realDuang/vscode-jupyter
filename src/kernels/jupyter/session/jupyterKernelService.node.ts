@@ -6,19 +6,11 @@ import { inject, injectable } from 'inversify';
 import * as path from '../../../platform/vscode-path/path';
 import * as uriPath from '../../../platform/vscode-path/resources';
 import { CancellationToken, Uri } from 'vscode';
-import {
-    traceInfo,
-    traceVerbose,
-    traceDecoratorError,
-    traceError,
-    traceWarning,
-    traceInfoIfCI
-} from '../../../platform/logging';
+import { traceInfo, traceVerbose, traceDecoratorError, traceError, traceWarning } from '../../../platform/logging';
 import { getDisplayPath, getFilePath } from '../../../platform/common/platform/fs-paths';
 import { IFileSystemNode } from '../../../platform/common/platform/types.node';
 import { Resource, ReadWrite, IDisplayOptions } from '../../../platform/common/types';
 import { PythonEnvironment } from '../../../platform/pythonEnvironments/info';
-import { capturePerfTelemetry, sendTelemetryEvent, Telemetry } from '../../../telemetry';
 import { JupyterKernelDependencyError } from '../../errors/jupyterKernelDependencyError';
 import { cleanEnvironment } from '../../helpers';
 import { JupyterPaths } from '../../raw/finder/jupyterPaths.node';
@@ -126,7 +118,6 @@ export class JupyterKernelService implements IJupyterKernelService {
      * - metadata.interpreter = Interpreter information (useful in finding a kernel that matches a given interpreter)
      * - env = Will have environment variables of the activated environment.
      */
-    @capturePerfTelemetry(Telemetry.RegisterInterpreterAsKernel)
     @traceDecoratorError('Failed to register an interpreter as a kernel')
     private async registerKernel(
         kernel: LocalKernelConnectionMetadata,
@@ -181,20 +172,7 @@ export class JupyterKernelService implements IJupyterKernelService {
         );
 
         // Write out the contents into the new spec file
-        try {
-            await this.fs.writeFile(kernelSpecFilePath, JSON.stringify(contents, undefined, 4));
-        } catch (ex) {
-            const name = kernel.kernelSpec.name;
-            const language = kernel.kernelSpec.language;
-            sendTelemetryEvent(
-                Telemetry.FailedToUpdateKernelSpec,
-                undefined,
-                { name, language, failed: true },
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                ex as any
-            );
-            throw ex;
-        }
+        await this.fs.writeFile(kernelSpecFilePath, JSON.stringify(contents, undefined, 4));
         if (cancelToken.isCancellationRequested) {
             return;
         }
@@ -284,11 +262,6 @@ export class JupyterKernelService implements IJupyterKernelService {
                         uri
                     )}`
                 );
-                traceInfoIfCI(
-                    `Updated kernel spec for ${kernelConnection.id} with environment variables for ${getDisplayPath(
-                        uri
-                    )} with env variables ${JSON.stringify(specModel.env)}}`
-                );
 
                 if (cancelToken?.isCancellationRequested) {
                     return;
@@ -300,8 +273,6 @@ export class JupyterKernelService implements IJupyterKernelService {
                 if (cancelToken?.isCancellationRequested) {
                     return;
                 }
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                sendTelemetryEvent(Telemetry.FailedToUpdateKernelSpec, undefined, undefined, ex as any);
                 traceError(
                     `Failed to update kernel spec for ${
                         kernelConnection.id

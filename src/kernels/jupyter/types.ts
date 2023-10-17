@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type * as nbformat from '@jupyterlab/nbformat';
-import type { Session, ContentsManager } from '@jupyterlab/services';
+import type WebSocketIsomorphic from 'isomorphic-ws';
 import { Event } from 'vscode';
 import { SemVer } from 'semver';
 import { Uri } from 'vscode';
@@ -15,17 +15,14 @@ import { PythonEnvironment } from '../../platform/pythonEnvironments/info';
 import {
     KernelConnectionMetadata,
     IJupyterConnection,
-    IJupyterKernelSession,
-    IJupyterKernelSpec,
     GetServerOptions,
     IKernelSocket,
-    KernelActionSource,
     LiveRemoteKernelConnectionMetadata,
     RemoteKernelConnectionMetadata
 } from '../types';
 import { ClassType } from '../../platform/ioc/types';
 import { ContributedKernelFinderKind, IContributedKernelFinder } from '../internalTypes';
-import { IJupyterServerUri, IJupyterUriProvider, JupyterServerCollection } from '../../api';
+import { IJupyterServerUri, IJupyterUriProvider, JupyterServerCollection, JupyterServerProvider } from '../../api';
 import { IQuickPickItemProvider } from '../../platform/common/providerBasedQuickPick';
 
 export type JupyterServerInfo = {
@@ -55,26 +52,6 @@ export interface IJupyterServerHelper extends IAsyncDisposable {
     refreshCommands(): Promise<void>;
 }
 
-export const IOldJupyterSessionManagerFactory = Symbol('IOldJupyterSessionManagerFactory');
-export interface IOldJupyterSessionManagerFactory {
-    create(connInfo: IJupyterConnection): Promise<IJupyterSessionManager>;
-}
-
-export interface IJupyterSessionManager extends IAsyncDisposable {
-    readonly isDisposed: boolean;
-    startNew(
-        resource: Resource,
-        kernelConnection: KernelConnectionMetadata,
-        workingDirectory: Uri,
-        ui: IDisplayOptions,
-        cancelToken: CancellationToken,
-        creator: KernelActionSource
-    ): Promise<IJupyterKernelSession>;
-    getKernelSpecs(): Promise<IJupyterKernelSpec[]>;
-    getRunningKernels(): Promise<IJupyterKernel[]>;
-    getRunningSessions(): Promise<Session.IModel[]>;
-}
-
 export interface IJupyterKernel {
     /**
      * Id of an existing (active) Kernel from an active session.
@@ -84,7 +61,7 @@ export interface IJupyterKernel {
      */
     id?: string;
     name: string;
-    lastActivityTime: Date;
+    lastActivityTime: Date | string;
     numberOfConnections: number;
 }
 
@@ -203,7 +180,7 @@ export interface IJupyterServerUriStorage {
      */
     readonly onDidLoad: Event<void>;
     readonly onDidChange: Event<void>;
-    readonly onDidRemove: Event<IJupyterServerUriEntry[]>;
+    readonly onDidRemove: Event<JupyterServerProviderHandle[]>;
     readonly onDidAdd: Event<IJupyterServerUriEntry>;
     readonly all: readonly IJupyterServerUriEntry[];
     /**
@@ -222,17 +199,6 @@ export interface IJupyterServerUriStorage {
 export interface IBackupFile {
     dispose: () => Promise<unknown>;
     filePath: string;
-}
-
-export const IJupyterBackingFileCreator = Symbol('IJupyterBackingFileCreator');
-export interface IJupyterBackingFileCreator {
-    createBackingFile(
-        resource: Resource,
-        workingDirectory: Uri,
-        kernel: KernelConnectionMetadata,
-        connInfo: IJupyterConnection,
-        contentsManager: ContentsManager
-    ): Promise<IBackupFile | undefined>;
 }
 
 export const IJupyterKernelService = Symbol('IJupyterKernelService');
@@ -265,6 +231,7 @@ export interface IJupyterRequestCreator {
         getAuthHeaders?: () => Record<string, string>,
         getWebSocketProtocols?: () => string | string[] | undefined
     ): ClassType<WebSocket>;
+    wrapWebSocketCtor(websocketCtor: ClassType<WebSocketIsomorphic>): ClassType<WebSocketIsomorphic>;
     getWebsocket(id: string): IKernelSocket | undefined;
     getRequestInit(): RequestInit;
 }
@@ -312,5 +279,10 @@ export const IJupyterServerProviderRegistry = Symbol('IJupyterServerProviderRegi
 export interface IJupyterServerProviderRegistry {
     onDidChangeCollections: Event<{ added: JupyterServerCollection[]; removed: JupyterServerCollection[] }>;
     readonly jupyterCollections: readonly JupyterServerCollection[];
-    createJupyterServerCollection(extensionId: string, id: string, label: string): JupyterServerCollection;
+    createJupyterServerCollection(
+        extensionId: string,
+        id: string,
+        label: string,
+        serverProvider: JupyterServerProvider
+    ): JupyterServerCollection;
 }

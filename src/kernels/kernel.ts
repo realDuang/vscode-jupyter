@@ -14,7 +14,8 @@ import {
     Disposable,
     Uri,
     NotebookDocument,
-    Memento
+    Memento,
+    CancellationError
 } from 'vscode';
 import {
     CodeSnippets,
@@ -24,10 +25,10 @@ import {
 } from '../platform/common/constants';
 import { IApplicationShell } from '../platform/common/application/types';
 import { WrappedError } from '../platform/errors/types';
-import { disposeAllDisposables, splitLines } from '../platform/common/helpers';
+import { dispose, splitLines } from '../platform/common/helpers';
 import { traceInfo, traceInfoIfCI, traceError, traceVerbose, traceWarning } from '../platform/logging';
 import { getDisplayPath, getFilePath } from '../platform/common/platform/fs-paths';
-import { Resource, IDisposable, IDisplayOptions, IExperimentService, Experiments } from '../platform/common/types';
+import { Resource, IDisposable, IDisplayOptions } from '../platform/common/types';
 import { createDeferred, raceTimeout, raceTimeoutError } from '../platform/common/utils/async';
 import { DataScience } from '../platform/common/utils/localize';
 import { noop, swallowExceptions } from '../platform/common/utils/misc';
@@ -196,8 +197,7 @@ abstract class BaseKernel implements IBaseKernel {
         protected readonly appShell: IApplicationShell,
         protected readonly startupCodeProviders: IStartupCodeProvider[],
         public readonly _creator: KernelActionSource,
-        private readonly workspaceMemento: Memento,
-        private readonly experiments: IExperimentService
+        private readonly workspaceMemento: Memento
     ) {
         this.disposables.push(this._onStatusChanged);
         this.disposables.push(this._onRestarted);
@@ -325,7 +325,7 @@ abstract class BaseKernel implements IBaseKernel {
                 await Promise.all(promises);
             } finally {
                 this.startCancellation.dispose();
-                disposeAllDisposables(this.disposables);
+                dispose(this.disposables);
             }
         };
         this.disposingPromise = disposeImpl();
@@ -441,13 +441,21 @@ abstract class BaseKernel implements IBaseKernel {
                 this.disposables
             );
         }
+        if (this.disposing) {
+            throw new CancellationError();
+        }
+        Cancellation.throwIfCanceled(this.startCancellation.token);
+
         if (!this._jupyterSessionPromise) {
             const stopWatch = new StopWatch();
             await trackKernelResourceInformation(this.resourceUri, {
                 kernelConnection: this.kernelConnectionMetadata,
                 actionSource: this.creator
             });
-
+            if (this.disposing) {
+                throw new CancellationError();
+            }
+            Cancellation.throwIfCanceled(this.startCancellation.token);
             this._jupyterSessionPromise = this.createJupyterSession()
                 .then((session) => {
                     sendKernelTelemetryEvent(this.resourceUri, Telemetry.PerceivedJupyterStartupNotebook, {
@@ -486,15 +494,11 @@ abstract class BaseKernel implements IBaseKernel {
                 restarted.resolve(true);
             }
         };
-        if (this.experiments.inExperiment(Experiments.NewJupyterSession)) {
-            const statusChangedHandler = (_: unknown, e: KernelMessage.Status) => restartHandler(e);
-            session.statusChanged.connect(statusChangedHandler);
-            disposables.push(
-                new Disposable(() => swallowExceptions(() => session.statusChanged.disconnect(statusChangedHandler)))
-            );
-        } else {
-            session.onSessionStatusChanged(restartHandler, this, disposables);
-        }
+        const statusChangedHandler = (_: unknown, e: KernelMessage.Status) => restartHandler(e);
+        session.statusChanged.connect(statusChangedHandler);
+        disposables.push(
+            new Disposable(() => swallowExceptions(() => session.statusChanged.disconnect(statusChangedHandler)))
+        );
 
         if (session && session.kernel) {
             traceInfo(`Interrupting kernel: ${session.kernel.name}`);
@@ -535,7 +539,7 @@ abstract class BaseKernel implements IBaseKernel {
                 );
                 throw exc;
             } finally {
-                disposeAllDisposables(disposables);
+                dispose(disposables);
             }
         })();
 
@@ -553,6 +557,10 @@ abstract class BaseKernel implements IBaseKernel {
     }
 
     private async createJupyterSession(): Promise<IKernelSession> {
+        if (this.disposing) {
+            throw new CancellationError();
+        }
+        Cancellation.throwIfCanceled(this.startCancellation.token);
         let disposables: Disposable[] = [];
         try {
             // No need to block kernel startup on UI updates.
@@ -583,9 +591,14 @@ abstract class BaseKernel implements IBaseKernel {
                 token: this.startCancellation.token,
                 creator: this.creator
             });
+            if (this.disposing) {
+                throw new CancellationError();
+            }
             Cancellation.throwIfCanceled(this.startCancellation.token);
             await this.initializeAfterStart(session);
-
+            if (this.disposing) {
+                throw new CancellationError();
+            }
             this.sendKernelStartedTelemetry();
             this._session = session;
             this._onStarted.fire();
@@ -614,7 +627,7 @@ abstract class BaseKernel implements IBaseKernel {
             );
             throw WrappedError.from(message + ' ' + ('message' in ex ? ex.message : ex.toString()), ex);
         } finally {
-            disposeAllDisposables(disposables);
+            dispose(disposables);
         }
     }
     private uiWasDisabledWhenKernelStartupTelemetryWasLastSent?: boolean;
@@ -710,19 +723,12 @@ abstract class BaseKernel implements IBaseKernel {
                     }
                 }
             });
-            if (this.experiments.inExperiment(Experiments.NewJupyterSession)) {
-                const statusChangeHandler = (_: unknown, status: KernelMessage.Status) =>
-                    this._onStatusChanged.fire(status);
-                session.statusChanged.connect(statusChangeHandler);
-                this.disposables.push(
-                    new Disposable(() => swallowExceptions(() => session.statusChanged.disconnect(statusChangeHandler)))
-                );
-            } else {
-                const statusChangeHandler = (status: KernelMessage.Status) => {
-                    this._onStatusChanged.fire(status);
-                };
-                this.disposables.push(session.onSessionStatusChanged(statusChangeHandler));
-            }
+            const statusChangeHandler = (_: unknown, status: KernelMessage.Status) =>
+                this._onStatusChanged.fire(status);
+            session.statusChanged.connect(statusChangeHandler);
+            this.disposables.push(
+                new Disposable(() => swallowExceptions(() => session.statusChanged.disconnect(statusChangeHandler)))
+            );
         }
 
         // So that we don't have problems with ipywidgets, always register the default ipywidgets comm target.
@@ -971,8 +977,7 @@ export class ThirdPartyKernel extends BaseKernel implements IThirdPartyKernel {
         appShell: IApplicationShell,
         kernelSettings: IKernelSettings,
         startupCodeProviders: IStartupCodeProvider[],
-        workspaceMemento: Memento,
-        experiments: IExperimentService
+        workspaceMemento: Memento
     ) {
         super(
             `3rdPartyKernel_${uuid()}`,
@@ -984,8 +989,7 @@ export class ThirdPartyKernel extends BaseKernel implements IThirdPartyKernel {
             appShell,
             startupCodeProviders,
             '3rdPartyExtension',
-            workspaceMemento,
-            experiments
+            workspaceMemento
         );
     }
 }
@@ -1007,8 +1011,7 @@ export class Kernel extends BaseKernel implements IKernel {
         appShell: IApplicationShell,
         public readonly controller: IKernelController,
         startupCodeProviders: IStartupCodeProvider[],
-        workspaceMemento: Memento,
-        experiments: IExperimentService
+        workspaceMemento: Memento
     ) {
         super(
             uuid(),
@@ -1020,8 +1023,7 @@ export class Kernel extends BaseKernel implements IKernel {
             appShell,
             startupCodeProviders,
             'jupyterExtension',
-            workspaceMemento,
-            experiments
+            workspaceMemento
         );
     }
 }

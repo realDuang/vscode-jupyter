@@ -41,8 +41,6 @@ import {
     window,
     workspace
 } from 'vscode';
-import * as fsExtra from 'fs-extra';
-import * as path from './platform/vscode-path/path';
 import { buildApi, IExtensionApi } from './standalone/api/api';
 import { IApplicationEnvironment, ICommandManager } from './platform/common/application/types';
 import { setHomeDirectory, traceError } from './platform/logging';
@@ -58,7 +56,6 @@ import {
     IOutputChannel,
     IsCodeSpace,
     IsDevMode,
-    IsPreRelease,
     IsWebExtension,
     WORKSPACE_MEMENTO
 } from './platform/common/types';
@@ -95,6 +92,10 @@ import { IInterpreterPackages } from './platform/interpreter/types';
 import { homedir, platform, arch, userInfo } from 'os';
 import { getUserHomeDir } from './platform/common/utils/platform.node';
 import { homePath } from './platform/common/platform/fs-paths.node';
+import {
+    activate as activateExecutionAnalysis,
+    deactivate as deactivateExecutionAnalysis
+} from './standalone/executionAnalysis/extension';
 
 durations.codeLoadingTime = stopWatch.elapsedTime;
 
@@ -154,6 +155,8 @@ export function deactivate(): Thenable<void> {
         }
     }
 
+    deactivateExecutionAnalysis();
+
     return Promise.resolve();
 }
 
@@ -189,6 +192,10 @@ async function activateUnsafe(
 
         startupDurations.endActivateTime = startupStopWatch.elapsedTime;
         activationDeferred.resolve();
+
+        //===============================================
+        // dynamically load standalone plugins
+        activateExecutionAnalysis(context).then(noop, noop);
 
         const api = buildApi(activationPromise, serviceManager, serviceContainer, context);
         return [api, activationPromise, serviceContainer];
@@ -330,13 +337,6 @@ async function activateLegacy(
             workspace.getConfiguration('jupyter').get<boolean>('development', false));
     serviceManager.addSingletonInstance<boolean>(IsDevMode, isDevMode);
     serviceManager.addSingletonInstance<boolean>(IsWebExtension, false);
-    const isPreReleasePromise = fsExtra
-        .readFile(path.join(context.extensionPath, 'package.json'), { encoding: 'utf-8' })
-        .then((contents) => {
-            const packageJSONLive = JSON.parse(contents);
-            return isDevMode || packageJSONLive?.__metadata?.preRelease;
-        });
-    serviceManager.addSingletonInstance<Promise<boolean>>(IsPreRelease, isPreReleasePromise);
     if (isDevMode) {
         commands.executeCommand('setContext', 'jupyter.development', true).then(noop, noop);
     }

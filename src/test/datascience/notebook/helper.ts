@@ -53,11 +53,7 @@ import {
     hasErrorOutput
 } from '../../../kernels/execution/helpers';
 import { chainWithPendingUpdates } from '../../../kernels/execution/notebookUpdater';
-import {
-    IJupyterServerUriStorage,
-    IJupyterSessionManager,
-    IOldJupyterSessionManagerFactory
-} from '../../../kernels/jupyter/types';
+import { IJupyterServerUriStorage } from '../../../kernels/jupyter/types';
 import {
     IKernelFinder,
     IKernelProvider,
@@ -83,7 +79,7 @@ import {
     PYTHON_LANGUAGE,
     defaultNotebookFormat
 } from '../../../platform/common/constants';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { getDisplayPath } from '../../../platform/common/platform/fs-paths';
 import { IFileSystem, IPlatformService } from '../../../platform/common/platform/types';
 import { GLOBAL_MEMENTO, IDisposable, IMemento, IsWebExtension } from '../../../platform/common/types';
@@ -103,6 +99,7 @@ import { closeActiveWindows, isInsiders } from '../../initialize';
 import { verifySelectedControllerIsRemoteForRemoteTests } from '../helpers';
 import { ControllerPreferredService } from './controllerPreferredService';
 import { JupyterConnection } from '../../../kernels/jupyter/connection/jupyterConnection';
+import { JupyterLabHelper } from '../../../kernels/jupyter/session/jupyterLabHelper';
 
 // Running in Conda environments, things can be a little slower.
 export const defaultNotebookTestTimeout = 60_000;
@@ -340,14 +337,11 @@ async function shutdownRemoteKernels() {
     const api = await initialize();
     const serverUriStorage = api.serviceContainer.get<IJupyterServerUriStorage>(IJupyterServerUriStorage);
     const jupyterConnection = api.serviceContainer.get<JupyterConnection>(JupyterConnection);
-    const jupyterSessionManagerFactory = api.serviceContainer.get<IOldJupyterSessionManagerFactory>(
-        IOldJupyterSessionManagerFactory
-    );
     const cancelToken = new CancellationTokenSource();
-    let sessionManager: IJupyterSessionManager | undefined;
+    let sessionManager: JupyterLabHelper | undefined;
     try {
         const connection = await jupyterConnection.createConnectionInfo((await serverUriStorage.getAll())[0].provider);
-        const sessionManager = await jupyterSessionManagerFactory.create(connection);
+        sessionManager = JupyterLabHelper.create(connection.settings);
         const liveKernels = await sessionManager.getRunningKernels();
         await Promise.all(
             liveKernels.filter((item) => item.id).map((item) => KernelAPI.shutdownKernel(item.id!).catch(noop))
@@ -379,7 +373,7 @@ export async function closeNotebooksAndCleanUpAfterTests(disposables: IDisposabl
     await ensureNoActiveDebuggingSession();
     VSCodeNotebookController.kernelAssociatedWithDocument = undefined;
     await closeNotebooks(disposables);
-    disposeAllDisposables(disposables);
+    dispose(disposables);
     await shutdownAllNotebooks();
     await ensureNewNotebooksHavePythonCells();
     await shutdownRemoteKernels(); // Shutdown remote kernels, else the number of live kernels keeps growing.
@@ -406,7 +400,7 @@ export async function closeNotebooks(disposables: IDisposable[] = []) {
     const notebooks = api.serviceManager.get<IVSCodeNotebook>(IVSCodeNotebook) as VSCodeNotebook;
     await notebooks.closeActiveNotebooks();
     await closeActiveWindows();
-    disposeAllDisposables(disposables);
+    dispose(disposables);
     await shutdownAllNotebooks();
     if (workspace.notebookDocuments.length) {
         traceVerbose(
@@ -878,7 +872,6 @@ export async function createNewNotebook() {
         custom: {
             cells: [],
             metadata: <nbformat.INotebookMetadata>{
-                orig_nbformat: defaultNotebookFormat.major,
                 language_info: {
                     name: language
                 }

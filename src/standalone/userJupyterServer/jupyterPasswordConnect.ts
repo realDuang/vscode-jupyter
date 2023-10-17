@@ -12,10 +12,10 @@ import { sendTelemetryEvent, Telemetry } from '../../telemetry';
 import {
     IJupyterRequestAgentCreator,
     IJupyterRequestCreator,
-    IJupyterServerUriEntry,
-    IJupyterServerUriStorage
+    IJupyterServerUriStorage,
+    JupyterServerProviderHandle
 } from '../../kernels/jupyter/types';
-import { disposeAllDisposables } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/helpers';
 
 export interface IJupyterPasswordConnectInfo {
     requiresPassword: boolean;
@@ -39,12 +39,11 @@ export class JupyterPasswordConnect {
         private readonly disposables: IDisposableRegistry
     ) {
         // Sign up to see if servers are removed from our uri storage list
-        this.serverUriStorage.onDidRemove(this.onDidRemoveUris, this, this.disposables);
+        this.serverUriStorage.onDidRemove(this.onDidRemoveServers, this, this.disposables);
     }
     public getPasswordConnectionInfo(options: {
         url: string;
         isTokenEmpty: boolean;
-        displayName?: string;
         handle: string;
         validationErrorMessage?: string;
         disposables?: IDisposable[];
@@ -64,7 +63,6 @@ export class JupyterPasswordConnect {
             result = this.getJupyterConnectionInfo({
                 url: newUrl,
                 isTokenEmpty: options.isTokenEmpty,
-                displayName: options.displayName,
                 disposables,
                 validationErrorMessage: options.validationErrorMessage
             }).then((value) => {
@@ -80,7 +78,7 @@ export class JupyterPasswordConnect {
             result
                 .finally(() => {
                     if (disposeOnDone) {
-                        disposeAllDisposables(disposables);
+                        dispose(disposables);
                     }
                 })
                 .catch(noop);
@@ -104,7 +102,6 @@ export class JupyterPasswordConnect {
     private async getJupyterConnectionInfo(options: {
         url: string;
         isTokenEmpty: boolean;
-        displayName?: string;
         validationErrorMessage?: string;
         disposables: IDisposable[];
     }): Promise<IJupyterPasswordConnectInfo> {
@@ -118,15 +115,11 @@ export class JupyterPasswordConnect {
 
         if (requiresPassword || options.isTokenEmpty) {
             // Get password first
-            let friendlyUrl = options.url;
-            const uri = new URL(options.url);
-            friendlyUrl = `${uri.protocol}//${uri.hostname}`;
-            friendlyUrl = options.displayName ? `${options.displayName} (${friendlyUrl})` : friendlyUrl;
             if (requiresPassword && options.isTokenEmpty) {
                 const input = this.appShell.createInputBox();
                 options.disposables.push(input);
-                input.title = DataScience.jupyterSelectPasswordTitle(friendlyUrl);
-                input.prompt = DataScience.jupyterSelectPasswordPrompt;
+                input.title = DataScience.jupyterSelectPasswordTitle;
+                input.placeholder = DataScience.jupyterSelectPasswordPrompt;
                 input.ignoreFocusOut = true;
                 input.password = true;
                 input.validationMessage = options.validationErrorMessage || '';
@@ -209,10 +202,10 @@ export class JupyterPasswordConnect {
     private async getXSRFToken(url: string, sessionCookie: string): Promise<string | undefined> {
         let xsrfCookie: string | undefined;
         let headers;
-        let tokenUrl = `${url}login?`;
+        let tokenUrl = new URL('login?', addTrailingSlash(url)).toString();
 
         if (sessionCookie != '') {
-            tokenUrl = `${url}tree`;
+            tokenUrl = new URL('tree', addTrailingSlash(url)).toString();
             headers = {
                 Connection: 'keep-alive',
                 Cookie: sessionCookie
@@ -241,7 +234,7 @@ export class JupyterPasswordConnect {
 
     private async needPassword(url: string): Promise<boolean> {
         // A jupyter server will redirect if you ask for the tree when a login is required
-        const response = await this.makeRequest(`${url}tree?`, {
+        const response = await this.makeRequest(new URL('tree?', addTrailingSlash(url)).toString(), {
             method: 'get',
             redirect: 'manual',
             headers: { Connection: 'keep-alive' }
@@ -305,7 +298,7 @@ export class JupyterPasswordConnect {
         postParams.append('_xsrf', xsrfCookie);
         postParams.append('password', password);
 
-        const response = await this.makeRequest(`${url}login?`, {
+        const response = await this.makeRequest(new URL('login?', addTrailingSlash(url)).toString(), {
             method: 'post',
             headers: {
                 Cookie: `_xsrf=${xsrfCookie}`,
@@ -352,16 +345,16 @@ export class JupyterPasswordConnect {
     /**
      * When URIs are removed from the server list also remove them from
      */
-    private onDidRemoveUris(uriEntries: IJupyterServerUriEntry[]) {
-        uriEntries.forEach((uriEntry) => {
-            if (uriEntry.provider.id.startsWith('_builtin')) {
-                this.savedConnectInfo.delete(uriEntry.provider.handle);
+    private onDidRemoveServers(servers: JupyterServerProviderHandle[]) {
+        servers.forEach((server) => {
+            if (server.id.startsWith('_builtin')) {
+                this.savedConnectInfo.delete(server.handle);
             }
         });
     }
 }
 
-function addTrailingSlash(url: string): string {
+export function addTrailingSlash(url: string): string {
     let newUrl = url;
     if (newUrl[newUrl.length - 1] !== '/') {
         newUrl = `${newUrl}/`;

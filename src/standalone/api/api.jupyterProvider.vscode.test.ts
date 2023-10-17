@@ -3,7 +3,7 @@
 
 import * as sinon from 'sinon';
 import { assert } from 'chai';
-import { disposeAllDisposables } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/helpers';
 import { IDisposable, IExtensions } from '../../platform/common/types';
 import { traceInfo } from '../../platform/logging';
 import { IExtensionTestApi, waitForCondition } from '../../test/common';
@@ -23,10 +23,10 @@ import {
     commands,
     notebooks
 } from 'vscode';
-import { JupyterServer } from '../../api';
+import { JupyterServer, JupyterServerProvider } from '../../api';
 import { openAndShowNotebook } from '../../platform/common/utils/notebooks';
 import { JupyterServer as JupyterServerStarter } from '../../test/datascience/jupyterServer.node';
-import { IS_REMOTE_NATIVE_TEST } from '../../test/constants';
+import { IS_CONDA_TEST, IS_REMOTE_NATIVE_TEST } from '../../test/constants';
 import { isWeb } from '../../platform/common/utils/misc';
 import { MultiStepInput } from '../../platform/common/utils/multiStepInput';
 
@@ -43,6 +43,10 @@ suite('Jupyter Provider Tests', function () {
         if (IS_REMOTE_NATIVE_TEST() || isWeb()) {
             return this.skip();
         }
+        if (IS_CONDA_TEST()) {
+            // Due to upstream issue documented here https://github.com/microsoft/vscode-jupyter/issues/14338
+            return this.skip();
+        }
         this.timeout(120_000);
         api = await initialize();
         const tokenSource = new CancellationTokenSource();
@@ -53,7 +57,7 @@ suite('Jupyter Provider Tests', function () {
         });
     });
     suiteTeardown(() => {
-        disposeAllDisposables(disposables.concat(jupyterServerUrl));
+        dispose(disposables.concat(jupyterServerUrl));
         return closeNotebooksAndCleanUpAfterTests(disposables);
     });
     setup(async function () {
@@ -74,20 +78,20 @@ suite('Jupyter Provider Tests', function () {
     teardown(async function () {
         traceInfo(`End Test ${this.currentTest?.title}`);
         sinon.restore();
-        disposeAllDisposables(disposables);
+        dispose(disposables);
         traceInfo(`End Test Completed ${this.currentTest?.title}`);
     });
     test('Verify Kernel Source Action is registered & unregistered for the 3rd party extension', async () => {
-        const collection1 = api.createJupyterServerCollection('sample1', 'First Collection');
-        const collection2 = api.createJupyterServerCollection('sample2', 'Second Collection');
-        collection1.serverProvider = {
+        const serverProvider1 = {
             provideJupyterServers: () => Promise.resolve([]),
             resolveJupyterServer: () => Promise.reject(new Error('Not Implemented'))
         };
-        collection2.serverProvider = {
+        const serverProvider2 = {
             provideJupyterServers: () => Promise.resolve([]),
             resolveJupyterServer: () => Promise.reject(new Error('Not Implemented'))
         };
+        const collection1 = api.createJupyterServerCollection('sample1', 'First Collection', serverProvider1);
+        const collection2 = api.createJupyterServerCollection('sample2', 'Second Collection', serverProvider2);
         disposables.push(collection1);
         disposables.push(collection2);
         let matchingDisposable1: IDisposable | undefined;
@@ -239,15 +243,16 @@ suite('Jupyter Provider Tests', function () {
     //     assert.strictEqual(remoteConnection.id, selectedItem!.id);
     // });
     test('When there are 2 or more servers, then user is prompted to select a server', async () => {
-        const collection = api.createJupyterServerCollection(
-            'sampleServerProvider2',
-            'First Collection For Third Test'
-        );
-        disposables.push(collection);
-        collection.serverProvider = {
+        const serverProvider: JupyterServerProvider = {
             provideJupyterServers: () => Promise.resolve([]),
             resolveJupyterServer: () => Promise.reject(new Error('Not Implemented'))
         };
+        const collection = api.createJupyterServerCollection(
+            'sampleServerProvider2',
+            'First Collection For Third Test',
+            serverProvider
+        );
+        disposables.push(collection);
         const server1: JupyterServer = {
             id: 'Server1ForTesting',
             label: 'Server 1',
@@ -275,11 +280,9 @@ suite('Jupyter Provider Tests', function () {
         const servers = [server1, server2, server3];
         const onDidChangeServers = new EventEmitter<void>();
         disposables.push(onDidChangeServers);
-        collection.serverProvider = {
-            onDidChangeServers: onDidChangeServers.event,
-            provideJupyterServers: () => Promise.resolve(servers),
-            resolveJupyterServer: () => Promise.reject(new Error('Not Implemented'))
-        };
+        serverProvider.onDidChangeServers = onDidChangeServers.event;
+        serverProvider.provideJupyterServers = () => Promise.resolve(servers);
+        serverProvider.resolveJupyterServer = () => Promise.reject(new Error('Not Implemented'));
 
         let matchingProvider: NotebookKernelSourceActionProvider | undefined;
         await waitForCondition(
@@ -326,9 +329,10 @@ suite('Jupyter Provider Tests', function () {
         assert.isUndefined(controllerId);
         // Verify quick pick was displayed with three items.
         assert.strictEqual(multiStepStub.callCount, 1);
-        assert.strictEqual(multiStepStub.args[0][0].items.length, 3);
+        let quickPickItems = multiStepStub.args[0][0].items.filter((q) => q.kind !== QuickPickItemKind.Separator);
+        assert.strictEqual(quickPickItems.length, 3);
         assert.deepEqual(
-            multiStepStub.args[0][0].items.map((e) => e.label).sort(),
+            quickPickItems.map((e) => e.label).sort(),
             ['Server 1', 'Server 2', 'Server 3'],
             'Jupyter Servers not displayed in quick picks'
         );
@@ -340,21 +344,18 @@ suite('Jupyter Provider Tests', function () {
         // Verify a controller is not selected
         assert.isUndefined(controllerId2);
         assert.strictEqual(multiStepStub.callCount, 2);
-        assert.strictEqual(multiStepStub.args[1][0].items.length, 2);
+        quickPickItems = multiStepStub.args[1][0].items.filter((q) => q.kind !== QuickPickItemKind.Separator);
+        assert.strictEqual(quickPickItems.length, 2);
         assert.deepEqual(
-            multiStepStub.args[1][0].items.map((e) => e.label).sort(),
+            quickPickItems.map((e) => e.label).sort(),
             ['Server 1', 'Server 3'],
             'Jupyter Servers not displayed in quick picks'
         );
 
         // Add a command and that command should be displayed along with the 2 servers.
+        let commandsToReturn = [{ label: 'Sample Command' }];
         collection.commandProvider = {
-            commands: [
-                {
-                    title: 'Sample Command'
-                }
-            ],
-            provideCommands: () => Promise.resolve([]),
+            provideCommands: () => Promise.resolve(commandsToReturn),
             handleCommand: () => Promise.resolve(undefined)
         };
         // await sleep(100);
@@ -363,7 +364,8 @@ suite('Jupyter Provider Tests', function () {
         // Verify a controller is not selected
         assert.isUndefined(controllerId3);
         assert.strictEqual(multiStepStub.callCount, 3);
-        assert.strictEqual(multiStepStub.args[2][0].items.length, 4); // One separator and one item
+        quickPickItems = multiStepStub.args[2][0].items.filter((q) => q.kind !== QuickPickItemKind.Separator);
+        assert.strictEqual(quickPickItems.length, 3); // One separator and one item
         assert.deepEqual(
             multiStepStub.args[2][0].items
                 .filter((e) => e.kind !== QuickPickItemKind.Separator)
@@ -374,13 +376,14 @@ suite('Jupyter Provider Tests', function () {
         );
 
         // Remove the command and try again.
-        collection.commandProvider.commands = [];
+        commandsToReturn = [];
 
         const controllerId4 = await commands.executeCommand(actionCommand.command, ...(actionCommand.arguments || []));
         // Verify a controller is not selected
         assert.isUndefined(controllerId4);
         assert.strictEqual(multiStepStub.callCount, 4);
-        assert.strictEqual(multiStepStub.args[3][0].items.length, 2);
+        quickPickItems = multiStepStub.args[3][0].items.filter((q) => q.kind !== QuickPickItemKind.Separator);
+        assert.strictEqual(quickPickItems.length, 2);
         assert.deepEqual(
             multiStepStub.args[3][0].items
                 .filter((e) => e.kind !== QuickPickItemKind.Separator)

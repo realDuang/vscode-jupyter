@@ -26,7 +26,7 @@ import {
 import type { Kernel } from '@jupyterlab/services';
 import { CellExecutionCreator } from './cellExecutionCreator';
 import { IApplicationShell } from '../../platform/common/application/types';
-import { disposeAllDisposables } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/helpers';
 import { traceError, traceInfo, traceInfoIfCI, traceVerbose, traceWarning } from '../../platform/logging';
 import { IDisposable, IExtensionContext } from '../../platform/common/types';
 import { concatMultilineString, formatStreamText, isJupyterNotebook } from '../../platform/common/utils';
@@ -252,7 +252,7 @@ export class CellExecutionMessageHandler implements IDisposable {
         }
         this.disposed = true;
         traceCellMessage(this.cell, 'Execution Message Handler disposed');
-        disposeAllDisposables(this.disposables);
+        dispose(this.disposables);
         this.prompts.forEach((item) => item.dispose());
         this.prompts.clear();
         // Assume you have a long running cell, then reload vscode, next this cell continues running.
@@ -478,12 +478,14 @@ export class CellExecutionMessageHandler implements IDisposable {
             // Set the start time after we get some kind of a response to the execution request.
             // This is a more accurate representation of when the cell execution started.
             this.startTime = new Date().getTime();
-            try {
-                // The time from the kernel is more accurate, as that will ignore the network latency.
-                this.startTime = new Date(msg.header.date).getTime();
-            } catch {
-                //
-            }
+            // try {
+            //     // The time from the kernel is more accurate, as that will ignore the network latency.
+            //     // Note: There could be an offset between the time on the kernel and the time on the client.
+            //     // https://github.com/microsoft/vscode-jupyter/issues/14072
+            //     // this.startTime = new Date(msg.header.date).getTime();
+            // } catch {
+            //     //
+            // }
             this.execution?.start(this.startTime);
             traceInfo(`Kernel acknowledged execution of cell ${this.cell.index} @ ${this.startTime}`);
         }

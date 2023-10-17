@@ -15,11 +15,10 @@ import { sendTelemetryEvent } from '../../telemetry';
 import { noop } from '../../platform/common/utils/misc';
 import { isRemoteConnection } from '../../kernels/types';
 import {
-    JupyterAPI,
+    Jupyter,
     IExportedKernelService,
     IJupyterUriProvider,
     JupyterServerCollection,
-    JupyterServerProvider,
     JupyterServerCommandProvider
 } from '../../api';
 import { stripCodicons } from '../../platform/common/helpers';
@@ -34,7 +33,7 @@ export interface IExportedKernelServiceFactory {
  * This is the public API for other extensions to interact with this extension.
  */
 
-export interface IExtensionApi extends JupyterAPI {}
+export interface IExtensionApi extends Jupyter {}
 
 function waitForNotebookControllersCreationForServer(
     serverId: { id: string; handle: string },
@@ -163,83 +162,63 @@ export function buildApi(
             });
             return notebookEditor.notebook;
         },
-        createJupyterServerCollection: (id, label) => {
+        createJupyterServerCollection: (id, label, serverProvider) => {
+            sendApiUsageTelemetry(extensions, 'createJupyterServerCollection');
             label = stripCodicons(label);
             let documentation: Uri | undefined;
-            let serverProvider: JupyterServerProvider | undefined;
             let commandProvider: JupyterServerCommandProvider | undefined;
             let isDisposed = false;
             let proxy: JupyterServerCollection | undefined;
-            const collection: JupyterServerCollection = {
-                dispose: () => {
-                    isDisposed = true;
-                    proxy?.dispose();
-                },
-                get onDidChangeProvider() {
-                    // This event is not used by 3rd party extensions, hence returning a bogus event,
-                    // 3rd party extensions will not see this, only required by TS compiler.
-                    return () => ({ dispose: noop });
-                },
-                extensionId: '',
-                get id() {
-                    return id;
-                },
-                set label(value: string) {
-                    label = stripCodicons(value);
-                    label = value;
-                    if (proxy) {
-                        proxy.label = value;
+            // Omit PEMS that are only used for internal usage.
+            // I.e. remove the unwanted PEMS and return the valid API to the extension.
+            const collection: Omit<JupyterServerCollection, 'onDidChangeProvider' | 'serverProvider' | 'extensionId'> =
+                {
+                    dispose: () => {
+                        isDisposed = true;
+                        proxy?.dispose();
+                    },
+                    get id() {
+                        return id;
+                    },
+                    set label(value: string) {
+                        label = stripCodicons(value);
+                        label = value;
+                        if (proxy) {
+                            proxy.label = value;
+                        }
+                    },
+                    get label() {
+                        return label;
+                    },
+                    set documentation(value: Uri | undefined) {
+                        documentation = value;
+                        if (proxy) {
+                            proxy.documentation = value;
+                        }
+                    },
+                    get documentation() {
+                        return documentation;
+                    },
+                    set commandProvider(value: JupyterServerCommandProvider | undefined) {
+                        commandProvider = value;
+                        if (proxy) {
+                            proxy.commandProvider = value;
+                        }
+                    },
+                    get commandProvider() {
+                        return commandProvider;
                     }
-                },
-                get label() {
-                    return label;
-                },
-                set documentation(value: Uri | undefined) {
-                    documentation = value;
-                    if (proxy) {
-                        proxy.documentation = value;
-                    }
-                },
-                get documentation() {
-                    return documentation;
-                },
-                set commandProvider(value: JupyterServerCommandProvider | undefined) {
-                    commandProvider = value;
-                    if (proxy) {
-                        proxy.commandProvider = value;
-                    }
-                },
-                get commandProvider() {
-                    return commandProvider;
-                },
-                set serverProvider(value: JupyterServerProvider | undefined) {
-                    serverProvider = value;
-                    if (proxy) {
-                        proxy.serverProvider = value;
-                    }
-                },
-                get serverProvider() {
-                    return serverProvider;
-                }
-            };
+                };
             let extensionId = '';
             (async () => {
                 sendApiUsageTelemetry(extensions, 'createJupyterServerCollection');
                 extensionId = (await extensions.determineExtensionFromCallStack()).extensionId;
-                if (
-                    ![JVSC_EXTENSION_ID.split('.')[0], 'SynapseVSCode', 'GitHub']
-                        .map((s) => s.toLowerCase())
-                        .includes(extensionId.split('.')[0].toLowerCase())
-                ) {
-                    throw new Error(`Access to Proposed API not allowed, as it is subject to change.`);
-                }
                 const registration =
                     serviceContainer.get<IJupyterServerProviderRegistry>(IJupyterServerProviderRegistry);
-                proxy = registration.createJupyterServerCollection(extensionId, id, label);
+                proxy = registration.createJupyterServerCollection(extensionId, id, label, serverProvider);
                 proxy.label = label;
                 proxy.documentation = documentation;
                 proxy.commandProvider = commandProvider;
-                proxy.serverProvider = serverProvider;
                 if (isDisposed) {
                     proxy.dispose();
                 }
@@ -249,7 +228,8 @@ export function buildApi(
                     ex
                 )
             );
-            return collection;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return collection as any;
         }
     };
 

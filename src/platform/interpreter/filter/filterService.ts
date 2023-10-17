@@ -4,13 +4,13 @@
 import { inject, injectable } from 'inversify';
 import { EventEmitter, Uri } from 'vscode';
 import { IWorkspaceService } from '../../common/application/types';
-import { disposeAllDisposables } from '../../common/helpers';
+import { dispose } from '../../common/helpers';
 import { IDisposable, IDisposableRegistry, IsWebExtension } from '../../common/types';
 import { sendTelemetryEvent } from '../../../telemetry';
 import { Telemetry } from '../../common/constants';
 import { getDisplayPath } from '../../common/platform/fs-paths';
 import { traceVerbose } from '../../logging';
-import { Environment } from '../../api/pythonApiTypes';
+import { Environment } from '@vscode/python-extension';
 
 /**
  * Determine whether a Python environment should be excluded from the Kernel filter.
@@ -40,7 +40,7 @@ export class PythonEnvironmentFilter implements IDisposable {
     }
     public dispose() {
         this._onDidChange.dispose();
-        disposeAllDisposables(this.disposables);
+        dispose(this.disposables);
     }
     public isPythonEnvironmentExcluded(interpreter: { uri: Uri; envPath?: Uri } | Environment): boolean {
         if (this.webExtension) {

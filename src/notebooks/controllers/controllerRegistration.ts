@@ -4,7 +4,7 @@
 import { inject, injectable } from 'inversify';
 import { Event, EventEmitter, NotebookDocument } from 'vscode';
 import { IContributedKernelFinder } from '../../kernels/internalTypes';
-import { IJupyterServerUriEntry, IJupyterServerUriStorage } from '../../kernels/jupyter/types';
+import { IJupyterServerUriStorage, JupyterServerProviderHandle } from '../../kernels/jupyter/types';
 import { IKernelFinder, IKernelProvider, isRemoteConnection, KernelConnectionMetadata } from '../../kernels/types';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
 import { IPythonExtensionChecker } from '../../platform/api/types';
@@ -27,7 +27,6 @@ import {
 import { noop } from '../../platform/common/utils/misc';
 import { IServiceContainer } from '../../platform/ioc/types';
 import { traceError, traceInfoIfCI, traceVerbose, traceWarning } from '../../platform/logging';
-import { sendTelemetryEvent, Telemetry } from '../../telemetry';
 import { NotebookCellLanguageService } from '../languages/cellLanguageService';
 import { sendKernelListTelemetry } from '../telemetry/kernelTelemetry';
 import { PythonEnvironmentFilter } from '../../platform/interpreter/filter/filterService';
@@ -105,7 +104,7 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
         this.pythonEnvFilter.onDidChange(this.onDidChangeFilter, this, this.disposables);
         this.serverUriStorage.onDidChange(this.onDidChangeFilter, this, this.disposables);
         this.serverUriStorage.onDidChange(this.onDidChangeUri, this, this.disposables);
-        this.serverUriStorage.onDidRemove(this.onDidRemoveUris, this, this.disposables);
+        this.serverUriStorage.onDidRemove(this.onDidRemoveServers, this, this.disposables);
 
         this.onDidChange(
             ({ added }) => {
@@ -162,16 +161,6 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
         const connections = this.kernelFinder.kernels;
         this.createNotebookControllers(connections);
 
-        traceInfoIfCI(
-            `Kernels found in kernel finder include ${connections
-                .map((c) => `${c.kind}:${c.id}`)
-                .join('\n')} \n and currently registered controllers include ${this.registered
-                .map((c) => `${c.connection.kind}:${c.connection.id}`)
-                .join('\n')}`
-        );
-        traceInfoIfCI(
-            `Active Interpreter Kernels include ${Array.from(this._activeInterpreterControllerIds).join('\n')}`
-        );
         // Look for any controllers that we have disposed (no longer found when fetching)
         const disposedControllers = Array.from(this.registered).filter((controller) => {
             const connectionIsStillValid =
@@ -251,14 +240,14 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
         this.onDidChangeFilter();
     }
 
-    private async onDidRemoveUris(uriEntries: IJupyterServerUriEntry[]) {
+    private async onDidRemoveServers(servers: JupyterServerProviderHandle[]) {
         // Remove any connections that are no longer available.
-        uriEntries.forEach((item) => {
+        servers.forEach((item) => {
             this.registered.forEach((c) => {
                 if (
                     isRemoteConnection(c.connection) &&
-                    c.connection.serverProviderHandle.id === item.provider.id &&
-                    c.connection.serverProviderHandle.handle === item.provider.handle
+                    c.connection.serverProviderHandle.id === item.id &&
+                    c.connection.serverProviderHandle.handle === item.handle
                 ) {
                     traceWarning(
                         `Deleting controller ${c.id} as it is associated with a connection that has been removed`
@@ -432,14 +421,6 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
                 // Hence swallow cancellation errors.
                 return { added, existing };
             }
-            // We know that this fails when we have xeus kernels installed (untill that's resolved thats one instance when we can have duplicates).
-            sendTelemetryEvent(
-                Telemetry.FailedToCreateNotebookController,
-                undefined,
-                { kind: metadata.kind },
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                ex as any
-            );
             traceError(`Failed to create notebook controller for ${metadata.id}`, ex);
         }
         return { added, existing };

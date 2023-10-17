@@ -20,9 +20,10 @@ import { JupyterKernelSpec } from '../jupyterKernelSpec';
 import { createDeferred, raceTimeout } from '../../../platform/common/utils/async';
 import { IJupyterKernel } from '../types';
 import { sendTelemetryEvent, Telemetry } from '../../../telemetry';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/helpers';
 import { StopWatch } from '../../../platform/common/utils/stopWatch';
 import type { ISpecModel } from '@jupyterlab/services/lib/kernelspec/kernelspec';
+import { noop } from '../../../platform/common/utils/misc';
 
 export class JupyterLabHelper {
     public sessionManager: SessionManager;
@@ -90,6 +91,7 @@ export class JupyterLabHelper {
         if (!this.sessionManager) {
             return [];
         }
+        await raceTimeout(10_000, this.sessionManager.ready).catch(noop);
         // Not refreshing will result in `running` returning an empty iterator.
         await this.sessionManager.refreshRunning();
 
@@ -205,7 +207,7 @@ export class JupyterLabHelper {
                             : 'SpecManagerIsNotReady'
                     });
                 }
-                disposeAllDisposables(disposables);
+                dispose(disposables);
             }
 
             const kernelspecs = getKernelSpecs(oldKernelSpecs);

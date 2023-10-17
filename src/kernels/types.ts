@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import type { Kernel, KernelMessage, Session } from '@jupyterlab/services';
+import type { KernelMessage, ServerConnection, Session } from '@jupyterlab/services';
 import type { Observable } from 'rxjs/Observable';
 import type {
     CancellationToken,
@@ -23,8 +23,15 @@ import { IContributedKernelFinder } from './internalTypes';
 import { isWeb, noop } from '../platform/common/utils/misc';
 import { getTelemetrySafeHashedString } from '../platform/telemetry/helpers';
 import { getNormalizedInterpreterPath } from '../platform/pythonEnvironments/info/interpreter';
-import { InteractiveWindowView, JupyterNotebookView, PYTHON_LANGUAGE, Telemetry } from '../platform/common/constants';
+import {
+    InteractiveWindowView,
+    JVSC_EXTENSION_ID,
+    JupyterNotebookView,
+    PYTHON_LANGUAGE,
+    Telemetry
+} from '../platform/common/constants';
 import { sendTelemetryEvent } from '../telemetry';
+import { generateIdFromRemoteProvider } from './jupyter/jupyterUtils';
 
 export type WebSocketData = string | Buffer | ArrayBuffer | Buffer[];
 
@@ -88,12 +95,12 @@ export class BaseKernelConnectionMetadata {
 export class LiveRemoteKernelConnectionMetadata {
     public readonly kind = 'connectToLiveRemoteKernel';
     public readonly kernelModel: LiveKernelModel;
-    /**
-     * Python interpreter will be used for intellisense & the like.
-     */
     public readonly baseUrl: string;
     public readonly serverProviderHandle: JupyterServerProviderHandle;
     public readonly id: string;
+    /**
+     * Python interpreter will be used for intellisense & the like.
+     */
     public readonly interpreter?: PythonEnvironment;
 
     private constructor(options: {
@@ -124,6 +131,9 @@ export class LiveRemoteKernelConnectionMetadata {
         serverProviderHandle: JupyterServerProviderHandle;
     }) {
         return new LiveRemoteKernelConnectionMetadata(options);
+    }
+    public updateModel(model: LiveKernelModel) {
+        Object.assign(this.kernelModel, model);
     }
     public getHashId() {
         return getConnectionIdHash(this);
@@ -533,13 +543,13 @@ export interface IThirdPartyKernelProvider extends IBaseKernelProvider<IThirdPar
 }
 
 export interface IJupyterConnection extends Disposable {
-    readonly localLaunch: boolean;
     displayName: string;
     readonly baseUrl: string;
     readonly token: string;
     readonly providerId: string;
     readonly serverProviderHandle: JupyterServerProviderHandle;
     readonly hostName: string;
+    settings: ServerConnection.ISettings;
     /**
      * Directory where the notebook server was started.
      */
@@ -569,41 +579,18 @@ export interface IBaseKernelSession<T extends 'remoteJupyter' | 'localJupyter' |
     extends Session.ISessionConnection {
     readonly id: string;
     readonly kind: T;
-    readonly isDisposed: boolean;
-    readonly kernel: Kernel.IKernelConnection | null;
     readonly status: KernelMessage.Status;
     readonly kernelSocket: Observable<KernelSocketInformation | undefined>;
     disposeAsync(): Promise<void>;
-    /**
-     * @deprecated Use statusChanged instead.
-     */
-    onSessionStatusChanged: Event<KernelMessage.Status>;
     onDidDispose: Event<void>;
     onDidShutdown: Event<void>;
     restart(): Promise<void>;
     waitForIdle(timeout: number, token: CancellationToken): Promise<void>;
-    shutdown(): Promise<void>;
 }
 
 export interface IJupyterKernelSession extends IBaseKernelSession<'remoteJupyter' | 'localJupyter'> {}
 export interface IRawKernelSession extends IBaseKernelSession<'localRaw'> {}
 export type IKernelSession = IJupyterKernelSession | IRawKernelSession;
-
-export interface ISessionWithSocket extends Session.ISessionConnection {
-    /**
-     * The resource associated with this session.
-     */
-    resource: Resource;
-    /**
-     * Whether this is a remote session that we attached to.
-     */
-    isRemoteSession?: boolean;
-    /**
-     * Socket information used for hooking messages to the kernel.
-     */
-    kernelSocketInformation: KernelSocketInformation;
-    kernelConnectionMetadata: KernelConnectionMetadata;
-}
 
 export interface INewSessionWithSocket extends Session.ISessionConnection {
     kernelSocketInformation: KernelSocketInformation;
@@ -961,11 +948,23 @@ function sendKernelTelemetry(kernel: KernelConnectionMetadata) {
             ? getTelemetrySafeHashedString(kernel.kernelSpec.specFile)
             : Promise.resolve('');
     const kernelIdHash = getTelemetrySafeHashedString(kernel.id);
-    Promise.all([kernelSpecHashPromise, kernelIdHash])
-        .then(([kernelSpecHash, kernelId]) =>
+    const serverIdHashPromise = isRemoteConnection(kernel)
+        ? getTelemetrySafeHashedString(generateIdFromRemoteProvider(kernel.serverProviderHandle))
+        : Promise.resolve('');
+    const providerExtensionId = isRemoteConnection(kernel)
+        ? kernel.serverProviderHandle.extensionId
+        : JVSC_EXTENSION_ID;
+    const baseUrlHashPromise = isRemoteConnection(kernel)
+        ? getTelemetrySafeHashedString(kernel.baseUrl.toLowerCase())
+        : Promise.resolve('');
+    Promise.all([kernelSpecHashPromise, kernelIdHash, serverIdHashPromise, baseUrlHashPromise])
+        .then(([kernelSpecHash, kernelId, serverIdHash, baseUrlHash]) =>
             sendTelemetryEvent(Telemetry.KernelSpec, undefined, {
                 kernelId,
+                serverIdHash,
                 kernelSpecHash,
+                baseUrlHash,
+                providerExtensionId,
                 kernelConnectionType: kernel.kind,
                 kernelLanguage: language,
                 envType: interpreter?.envType,
