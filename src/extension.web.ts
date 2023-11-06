@@ -89,6 +89,7 @@ import {
     isCI,
     isTestExecution,
     JUPYTER_OUTPUT_CHANNEL,
+    PylanceExtension,
     PythonExtension,
     STANDARD_OUTPUT_CHANNEL
 } from './platform/common/constants';
@@ -137,9 +138,7 @@ export async function activate(context: IExtensionContext): Promise<IExtensionAp
             ready: Promise.resolve(),
             registerPythonApi: noop,
             registerRemoteServerProvider: () => ({ dispose: noop }),
-            showDataViewer: () => Promise.resolve(),
             getKernelService: () => Promise.resolve(undefined),
-            getSuggestedController: () => Promise.resolve(undefined),
             addRemoteJupyterServer: () => Promise.resolve(undefined),
             openNotebook: () => Promise.reject(),
             createJupyterServerCollection: () => {
@@ -265,6 +264,12 @@ function addOutputChannel(context: IExtensionContext, serviceManager: IServiceMa
         standardOutputChannel.appendLine(`Python Extension Version: ${pythonExtension.packageJSON['version']}.`);
     } else {
         standardOutputChannel.appendLine('Python Extension not installed.');
+    }
+    const pylanceExtension = extensions.getExtension(PylanceExtension);
+    if (pylanceExtension) {
+        standardOutputChannel.appendLine(`Pylance Extension Version: ${pylanceExtension.packageJSON['version']}.`);
+    } else {
+        standardOutputChannel.appendLine('Pylance Extension not installed.');
     }
     if (!workspace.workspaceFolders || workspace.workspaceFolders.length === 0) {
         standardOutputChannel.appendLine(`No workspace folder opened.`);

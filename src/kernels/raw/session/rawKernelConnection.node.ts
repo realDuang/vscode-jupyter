@@ -3,7 +3,6 @@
 
 import type { Kernel, KernelSpec, KernelMessage, ServerConnection } from '@jupyterlab/services';
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
-import cloneDeep from 'lodash/cloneDeep';
 import uuid from 'uuid/v4';
 import { traceError, traceInfo, traceVerbose, traceWarning } from '../../../platform/logging';
 import { IDisposable, Resource } from '../../../platform/common/types';
@@ -20,7 +19,6 @@ import { IKernelSocket, LocalKernelConnectionMetadata } from '../../types';
 import { suppressShutdownErrors } from '../../common/baseJupyterSession';
 import { Signal } from '@lumino/signaling';
 import type { IIOPubMessage, IMessage, IOPubMessageType, MessageType } from '@jupyterlab/services/lib/kernel/messages';
-import { ChainingExecuteRequester } from '../../common/chainingExecuteRequester';
 import { CancellationError, CancellationToken, CancellationTokenSource, Uri } from 'vscode';
 import { KernelProgressReporter } from '../../../platform/progress/kernelProgressReporter';
 import { DataScience } from '../../../platform/common/utils/localize';
@@ -35,7 +33,8 @@ import {
     wrapCancellationTokens
 } from '../../../platform/common/cancellation';
 import { StopWatch } from '../../../platform/common/utils/stopWatch';
-import { dispose } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/utils/lifecycle';
+import { KernelSocketMap } from '../../kernelSocket';
 
 let nonSerializingKernel: typeof import('@jupyterlab/services/lib/kernel/default');
 
@@ -45,7 +44,6 @@ to a raw IPython kernel running on the local machine. RawKernel is in charge of 
 input request, translating them, sending them to an IPython kernel over ZMQ, then passing back the messages
 */
 export class RawKernelConnection implements Kernel.IKernelConnection {
-    private chainingExecute = new ChainingExecuteRequester();
     public readonly statusChanged = new Signal<this, Kernel.Status>(this);
     public readonly connectionStatusChanged = new Signal<this, Kernel.ConnectionStatus>(this);
     public readonly iopubMessage = new Signal<this, IIOPubMessage<IOPubMessageType>>(this);
@@ -96,7 +94,7 @@ export class RawKernelConnection implements Kernel.IKernelConnection {
     private kernelProcess?: IKernelProcess;
     private exitHandler?: IDisposable;
     private realKernel?: Kernel.IKernelConnection;
-    public socket: IKernelSocket & IWebSocketLike & IDisposable;
+    private socket: IKernelSocket & IWebSocketLike & IDisposable;
     private restartToken?: CancellationTokenSource;
 
     constructor(
@@ -159,7 +157,6 @@ export class RawKernelConnection implements Kernel.IKernelConnection {
             this.kernelProcess = result.kernelProcess;
             this.realKernel = result.realKernel;
             this.socket = result.socket;
-            this.socket.emit('open');
             result.realKernel.info.then(
                 (info) => this.infoDeferred.resolve(info),
                 (ex) => this.infoDeferred.reject(ex)
@@ -288,7 +285,7 @@ export class RawKernelConnection implements Kernel.IKernelConnection {
     }
     public get spec(): Promise<KernelSpec.ISpecModel | undefined> {
         if (isUserRegisteredKernelSpecConnection(this.kernelConnectionMetadata)) {
-            const kernelSpec = cloneDeep(this.kernelConnectionMetadata.kernelSpec) as any;
+            const kernelSpec = JSON.parse(JSON.stringify(this.kernelConnectionMetadata.kernelSpec)) as any;
             const resources = 'resources' in kernelSpec ? kernelSpec.resources : {};
             return {
                 ...kernelSpec,
@@ -378,7 +375,7 @@ export class RawKernelConnection implements Kernel.IKernelConnection {
         disposeOnDone?: boolean,
         metadata?: import('@lumino/coreutils').JSONObject
     ): Kernel.IShellFuture<KernelMessage.IExecuteRequestMsg, KernelMessage.IExecuteReplyMsg> {
-        return this.chainingExecute.requestExecute(this.realKernel!, content, disposeOnDone, metadata);
+        return this.realKernel!.requestExecute(content, disposeOnDone, metadata);
     }
     public requestDebug(
         // eslint-disable-next-line no-caller,no-eval
@@ -573,7 +570,7 @@ function newRawKernel(kernelProcess: IKernelProcess, clientId: string, username:
     let socketInstance: IKernelSocket & IWebSocketLike & IDisposable;
     class RawSocketWrapper extends RawSocket {
         constructor() {
-            super(kernelProcess.connection, jupyterLabSerialize.serialize, jupyterLabSerialize.deserialize);
+            super(kernelProcess.connection, jupyterLabSerialize.serialize);
             socketInstance = this;
         }
     }
@@ -601,6 +598,8 @@ function newRawKernel(kernelProcess: IKernelProcess, clientId: string, username:
         model
     });
 
+    KernelSocketMap.set(realKernel.id, socketInstance!);
+    socketInstance!.emit('open');
     // Use this real kernel in result.
     return { realKernel, socket: socketInstance!, kernelProcess };
 }

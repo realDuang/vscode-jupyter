@@ -4,7 +4,6 @@
 
 const glob = require('glob');
 const path = require('path');
-const webpack_bundle_analyzer = require('webpack-bundle-analyzer');
 const constants = require('../constants');
 exports.nodeModulesToExternalize = [
     'pdfkit/js/pdfkit.standalone',
@@ -16,20 +15,7 @@ exports.nodeModulesToExternalize = [
 ];
 exports.nodeModulesToReplacePaths = [...exports.nodeModulesToExternalize];
 function getDefaultPlugins(name) {
-    const plugins = [];
-    // Only run the analyzer on a local machine or if required
-    if (process.env.VSC_JUPYTER_FORCE_ANALYZER) {
-        plugins.push(
-            new webpack_bundle_analyzer.BundleAnalyzerPlugin({
-                analyzerMode: 'static',
-                reportFilename: `${name}.analyzer.html`,
-                generateStatsFile: true,
-                statsFilename: `${name}.stats.json`,
-                openAnalyzer: false // Open file manually if you want to see it :)
-            })
-        );
-    }
-    return plugins;
+    return [];
 }
 exports.getDefaultPlugins = getDefaultPlugins;
 function getListOfExistingModulesInOutDir() {
@@ -75,14 +61,12 @@ function getZeroMQPreBuildsFoldersToKeep() {
     } else if (vsceTarget === 'web') {
         throw new Error('Not supported when targeting the Web');
     } else if (vsceTarget.includes('win32')) {
-        if (vsceTarget.includes('ia32')) {
-            return ['win32-ia32'];
-        } else if (vsceTarget.includes('x64')) {
+        if (vsceTarget.includes('x64')) {
             return ['win32-x64'];
         } else if (vsceTarget.includes('arm64')) {
             return ['win32-arm64'];
         } else {
-            return ['win32-ia32', 'win32-x64', 'win32-arm64'];
+            return ['win32-x64', 'win32-arm64'];
         }
     } else if (vsceTarget.includes('linux')) {
         if (vsceTarget.includes('arm64')) {

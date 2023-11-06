@@ -3,7 +3,7 @@
 
 import { IChangedArgs } from '@jupyterlab/coreutils';
 import * as fakeTimers from '@sinonjs/fake-timers';
-import { Kernel, KernelMessage, ServerConnection } from '@jupyterlab/services';
+import { Kernel, KernelMessage, ServerConnection, Session } from '@jupyterlab/services';
 import { ISignal, Signal } from '@lumino/signaling';
 import { assert } from 'chai';
 import { anything, instance, mock, verify, when } from 'ts-mockito';
@@ -13,63 +13,65 @@ import { DataScience } from '../../../platform/common/utils/localize';
 import { noop } from '../../../platform/common/utils/misc';
 import {
     IJupyterConnection,
-    INewSessionWithSocket,
     KernelConnectionMetadata,
     LiveRemoteKernelConnectionMetadata,
     LocalKernelSpecConnectionMetadata,
     RemoteKernelSpecConnectionMetadata
 } from '../../../kernels/types';
 import { JupyterKernelService } from '../../../kernels/jupyter/session/jupyterKernelService.node';
-import { dispose } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/utils/lifecycle';
 import { resolvableInstance } from '../../../test/datascience/helpers';
 import { createEventHandler } from '../../../test/common';
 import { JupyterSessionWrapper } from './jupyterSession';
 
 suite('JupyterSession', () => {
-    const disposables: IDisposable[] = [];
+    let disposables: IDisposable[] = [];
     let jupyterSession: JupyterSessionWrapper;
     let connection: IJupyterConnection;
-    let session: INewSessionWithSocket;
+    let session: Session.ISessionConnection;
     let kernel: Kernel.IKernelConnection;
     let token: CancellationTokenSource;
     let clock: fakeTimers.InstalledClock;
-    let sessionDisposed: Signal<INewSessionWithSocket, void>;
-    let sessionPropertyChanged: Signal<INewSessionWithSocket, 'path'>;
-    let sessionIOPubMessage: Signal<INewSessionWithSocket, KernelMessage.IIOPubMessage>;
+    let sessionDisposed: Signal<Session.ISessionConnection, void>;
+    let sessionPropertyChanged: Signal<Session.ISessionConnection, 'path'>;
+    let sessionIOPubMessage: Signal<Session.ISessionConnection, KernelMessage.IIOPubMessage>;
     let sessionKernelChanged: Signal<
-        INewSessionWithSocket,
+        Session.ISessionConnection,
         IChangedArgs<Kernel.IKernelConnection | null, Kernel.IKernelConnection | null, 'kernel'>
     >;
-    let sessionUnhandledMessage: Signal<INewSessionWithSocket, KernelMessage.IMessage>;
-    let sessionConnectionStatusChanged: Signal<INewSessionWithSocket, Kernel.ConnectionStatus>;
-    let sessionAnyMessage: Signal<INewSessionWithSocket, Kernel.IAnyMessageArgs>;
+    let sessionUnhandledMessage: Signal<Session.ISessionConnection, KernelMessage.IMessage>;
+    let sessionConnectionStatusChanged: Signal<Session.ISessionConnection, Kernel.ConnectionStatus>;
+    let sessionAnyMessage: Signal<Session.ISessionConnection, Kernel.IAnyMessageArgs>;
     let kernelService: JupyterKernelService;
     function createJupyterSession(resource: Resource = undefined, kernelConnectionMetadata: KernelConnectionMetadata) {
         connection = mock<IJupyterConnection>();
-        when(connection.mappedRemoteNotebookDir).thenReturn(undefined);
         token = new CancellationTokenSource();
         disposables.push(token);
 
-        session = mock<INewSessionWithSocket>();
+        session = mock<Session.ISessionConnection>();
         kernel = mock<Kernel.IKernelConnection>();
         when(session.shutdown()).thenResolve();
         when(session.dispose()).thenReturn();
         when(session.kernel).thenReturn(instance(kernel));
-        sessionDisposed = new Signal<INewSessionWithSocket, void>(instance(session));
-        sessionPropertyChanged = new Signal<INewSessionWithSocket, 'path'>(instance(session));
-        sessionIOPubMessage = new Signal<INewSessionWithSocket, KernelMessage.IIOPubMessage>(instance(session));
+        sessionDisposed = new Signal<Session.ISessionConnection, void>(instance(session));
+        sessionPropertyChanged = new Signal<Session.ISessionConnection, 'path'>(instance(session));
+        sessionIOPubMessage = new Signal<Session.ISessionConnection, KernelMessage.IIOPubMessage>(instance(session));
         sessionKernelChanged = new Signal<
-            INewSessionWithSocket,
+            Session.ISessionConnection,
             IChangedArgs<Kernel.IKernelConnection | null, Kernel.IKernelConnection | null, 'kernel'>
         >(instance(session));
-        sessionUnhandledMessage = new Signal<INewSessionWithSocket, KernelMessage.IMessage>(instance(session));
-        sessionConnectionStatusChanged = new Signal<INewSessionWithSocket, Kernel.ConnectionStatus>(instance(session));
-        sessionAnyMessage = new Signal<INewSessionWithSocket, Kernel.IAnyMessageArgs>(instance(session));
+        sessionUnhandledMessage = new Signal<Session.ISessionConnection, KernelMessage.IMessage>(instance(session));
+        sessionConnectionStatusChanged = new Signal<Session.ISessionConnection, Kernel.ConnectionStatus>(
+            instance(session)
+        );
+        sessionAnyMessage = new Signal<Session.ISessionConnection, Kernel.IAnyMessageArgs>(instance(session));
         when(session.disposed).thenReturn(sessionDisposed);
         when(session.propertyChanged).thenReturn(sessionPropertyChanged);
         when(session.iopubMessage).thenReturn(sessionIOPubMessage);
         when(session.kernelChanged).thenReturn(sessionKernelChanged);
-        when(session.statusChanged).thenReturn(new Signal<INewSessionWithSocket, Kernel.Status>(instance(session)));
+        when(session.statusChanged).thenReturn(
+            new Signal<Session.ISessionConnection, Kernel.Status>(instance(session))
+        );
         when(session.unhandledMessage).thenReturn(sessionUnhandledMessage);
         when(session.connectionStatusChanged).thenReturn(sessionConnectionStatusChanged);
         when(session.anyMessage).thenReturn(sessionAnyMessage);
@@ -105,7 +107,7 @@ suite('JupyterSession', () => {
     }
     teardown(async () => {
         await jupyterSession.disposeAsync().catch(noop);
-        dispose(disposables);
+        disposables = dispose(disposables);
     });
 
     suite('Shutting down of sessions when disposing a session', () => {
@@ -349,6 +351,7 @@ suite('JupyterSession', () => {
                 when(future.done).thenReturn(Promise.resolve(undefined as any));
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 when(kernel.requestExecute(anything(), anything(), anything())).thenReturn(instance(future) as any);
+                when(kernel.requestExecute(anything())).thenReturn(instance(future) as any);
 
                 const result = jupyterSession.kernel!.requestExecute({
                     code: '',

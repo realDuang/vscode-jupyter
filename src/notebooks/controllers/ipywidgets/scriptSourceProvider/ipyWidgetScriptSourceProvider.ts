@@ -13,7 +13,7 @@ import {
     WidgetScriptSource
 } from '../types';
 import { CDNWidgetScriptSourceProvider } from './cdnWidgetScriptSourceProvider';
-import { dispose } from '../../../../platform/common/helpers';
+import { dispose } from '../../../../platform/common/utils/lifecycle';
 import { Disposable } from 'vscode';
 import type { IAnyMessageArgs, IKernelConnection } from '@jupyterlab/services/lib/kernel/kernel';
 import type { ICommOpenMsg } from '@jupyterlab/services/lib/kernel/messages';
@@ -151,11 +151,10 @@ export class IPyWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
         }
     }
     private monitorKernel() {
+        this.hookKernelEvents();
         this.kernel.onStarted(this.hookKernelEvents, this, this.disposables);
         this.kernel.onRestarted(this.hookKernelEvents, this, this.disposables);
-
-        const subscription = this.kernel.kernelSocket.subscribe(() => this.hookKernelEvents());
-        this.disposables.push(new Disposable(() => subscription.unsubscribe()));
+        this.kernel.onDidKernelSocketChange(() => this.hookKernelEvents(), this, this.disposables);
     }
     private hookKernelEvents() {
         const kernelConnection = this.kernel.session?.kernel;

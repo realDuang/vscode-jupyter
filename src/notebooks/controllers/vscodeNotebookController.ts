@@ -30,7 +30,7 @@ import {
     IApplicationShell
 } from '../../platform/common/application/types';
 import { Exiting, InteractiveWindowView, JupyterNotebookView, PYTHON_LANGUAGE } from '../../platform/common/constants';
-import { dispose } from '../../platform/common/helpers';
+import { dispose } from '../../platform/common/utils/lifecycle';
 import { traceInfoIfCI, traceInfo, traceVerbose, traceWarning, traceError } from '../../platform/logging';
 import { getDisplayPath } from '../../platform/common/platform/fs-paths';
 import {
@@ -84,7 +84,7 @@ import { ITrustedKernelPaths } from '../../kernels/raw/finder/types';
 import { KernelController } from '../../kernels/kernelController';
 import { RemoteKernelReconnectBusyIndicator } from './remoteKernelReconnectBusyIndicator';
 import { LastCellExecutionTracker } from '../../kernels/execution/lastCellExecutionTracker';
-import { IAnyMessageArgs } from '@jupyterlab/services/lib/kernel/kernel';
+import type { IAnyMessageArgs } from '@jupyterlab/services/lib/kernel/kernel';
 import { getParentHeaderMsgId } from '../../kernels/execution/cellExecutionMessageHandler';
 import { DisposableStore } from '../../platform/common/utils/lifecycle';
 
@@ -522,7 +522,7 @@ export class VSCodeNotebookController implements Disposable, IVSCodeNotebookCont
                 new NotebookRendererScript(
                     Uri.joinPath(
                         this.context.extensionUri,
-                        'out',
+                        'dist',
                         'webviews',
                         'webview-side',
                         'widgetTester',

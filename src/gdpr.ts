@@ -374,17 +374,6 @@
      ]
    }
  */
-//Telemetry.ExtensionCallerIdentification
-/* __GDPR__
-   "DATASCIENCE.JUPYTER_EXTENSION_CALLER_IDENTIFICATION" : {
-     "extensionId": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"Extension Id that's attempting to use the API.","owner":"donjayamanne"},
-     "result": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"","owner":"donjayamanne"},
-     "${include}": [
-       "${F1}"
-
-     ]
-   }
- */
 //Telemetry.JupyterKernelApiAccess
 /* __GDPR__
    "DATASCIENCE.JUPYTER_KERNEL_API_ACCESS" : {
@@ -444,18 +433,6 @@
    "DATASCIENCE.JUPYTER_KERNEL_STARTUP_HOOK" : {
      "extensionId": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"Extension Id that's attempting to use the API.","owner":"donjayamanne"},
      "providerId": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"Id of the Jupyter Server Provider.","owner":"donjayamanne"},
-     "${include}": [
-       "${F1}"
-
-     ]
-   }
- */
-//Telemetry.JupyterServerProviderResponseApi
-/* __GDPR__
-   "DATASCIENCE.JUPYTER_SERVER_PROVIDER_RESPONSE_API" : {
-     "providerId": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"","owner":"donjayamanne"},
-     "extensionId": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"Extension Id that's attempting to use the API.","owner":"donjayamanne"},
-     "pemUsed": {"classification":"PublicNonPersonalData","purpose":"FeatureInsight","comment":"Name of the API member used.","owner":"donjayamanne"},
      "${include}": [
        "${F1}"
 

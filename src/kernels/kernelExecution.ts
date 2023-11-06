@@ -1,9 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { IOutput } from '@jupyterlab/nbformat';
-import { NotebookCell, EventEmitter, notebooks, NotebookCellExecutionState, NotebookDocument, workspace } from 'vscode';
-import { NotebookCellKind } from 'vscode-languageserver-protocol';
+import type { IOutput } from '@jupyterlab/nbformat';
+import {
+    NotebookCell,
+    NotebookCellKind,
+    EventEmitter,
+    notebooks,
+    NotebookCellExecutionState,
+    NotebookDocument,
+    workspace
+} from 'vscode';
 import { IApplicationShell } from '../platform/common/application/types';
 import { getDisplayPath } from '../platform/common/platform/fs-paths';
 import { IDisposable, IExtensionContext } from '../platform/common/types';

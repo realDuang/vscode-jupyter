@@ -15,7 +15,7 @@ import { ApplicationShell } from '../../../../platform/common/application/applic
 import { IApplicationShell, IWorkspaceService } from '../../../../platform/common/application/types';
 import { WorkspaceService } from '../../../../platform/common/application/workspace.node';
 import { ConfigurationService } from '../../../../platform/common/configuration/service.node';
-import { dispose } from '../../../../platform/common/helpers';
+import { dispose } from '../../../../platform/common/utils/lifecycle';
 import { HttpClient } from '../../../../platform/common/net/httpClient';
 import { PersistentState, PersistentStateFactory } from '../../../../platform/common/persistentState';
 import { IFileSystemNode } from '../../../../platform/common/platform/types.node';
@@ -26,7 +26,6 @@ import {
     IJupyterSettings,
     ReadWrite
 } from '../../../../platform/common/types';
-import { noop } from '../../../../test/core';
 import { IWidgetScriptSourceProviderFactory, ILocalResourceUriConverter } from '../types';
 import { CDNWidgetScriptSourceProvider } from './cdnWidgetScriptSourceProvider';
 import { IPyWidgetScriptManagerFactory } from './ipyWidgetScriptManagerFactory.node';
@@ -51,7 +50,7 @@ suite('ipywidget - Widget Script Source Provider', () => {
     let context: IExtensionContext;
     let memento: Memento;
     let jupyterPaths: JupyterPaths;
-    const disposables: IDisposable[] = [];
+    let disposables: IDisposable[] = [];
     setup(() => {
         configService = mock(ConfigurationService);
         appShell = mock(ApplicationShell);
@@ -65,15 +64,13 @@ suite('ipywidget - Widget Script Source Provider', () => {
         kernel = mock<IKernel>();
         const onStarted = new EventEmitter<void>();
         const onReStarted = new EventEmitter<void>();
+        const kernelSocket = new EventEmitter<void>();
         disposables.push(onStarted);
         disposables.push(onReStarted);
+        disposables.push(kernelSocket);
         when(kernel.onStarted).thenReturn(onStarted.event);
         when(kernel.onRestarted).thenReturn(onReStarted.event);
-        when(kernel.kernelSocket).thenReturn({
-            subscribe: () => ({
-                dispose: () => noop()
-            })
-        } as any);
+        when(kernel.onDidKernelSocketChange).thenReturn(kernelSocket.event);
         when(stateFactory.createGlobalPersistentState(anything(), anything())).thenReturn(
             instance(userSelectedOkOrDoNotShowAgainInPrompt)
         );
@@ -84,7 +81,7 @@ suite('ipywidget - Widget Script Source Provider', () => {
     });
     teardown(() => {
         sinon.restore();
-        dispose(disposables);
+        disposables = dispose(disposables);
     });
     function createScripSourceProvider() {
         const httpClient = mock(HttpClient);

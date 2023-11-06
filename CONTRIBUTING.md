@@ -13,8 +13,8 @@
 
 ### Prerequisites
 
-1. [Node.js](https://nodejs.org/) 16.14.2
-2. [npm](https://www.npmjs.com/) 8.15.1
+1. [Node.js](https://nodejs.org/) 18.15.0
+2. [npm](https://www.npmjs.com/) 9.5.0
 3. [Python](https://www.python.org/) 3.6 or later
 4. Windows, macOS, or Linux
 5. [Visual Studio Code](https://code.visualstudio.com/)
@@ -23,7 +23,6 @@
     - [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
     - [EditorConfig for VS Code](https://marketplace.visualstudio.com/items?itemName=EditorConfig.EditorConfig)
     - [Python Extension for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-python.python)
-    - [TypeScript + Webpack Problem Matchers](https://marketplace.visualstudio.com/items?itemName=amodio.tsl-problem-matcher)
 
 ### Setup
 
@@ -46,7 +45,7 @@ python -m pip --disable-pip-version-check install -t ./pythonFiles/lib/python --
 
 ### Incremental Build
 
-Run the `Compile`, `Compile Web Views`, and `Compile Web Extension` build Tasks from the [Run Build Task...](https://code.visualstudio.com/docs/editor/tasks) command picker (short cut `CTRL+SHIFT+B` or `⇧⌘B`). This will leave build tasks running in the background and which will re-run as files are edited and saved. You can see the output from either task in the Terminal panel (use the selector to choose which output to look at).
+Run the `Compile` build Tasks from the [Run Build Task...](https://code.visualstudio.com/docs/editor/tasks) command picker (short cut `CTRL+SHIFT+B` or `⇧⌘B`). This will leave build tasks running in the background and which will re-run as files are edited and saved. You can see the output from either task in the Terminal panel (use the selector to choose which output to look at).
 
 You can also compile from the command-line. For a full compile you can use:
 
@@ -58,10 +57,9 @@ For incremental builds you can use the following commands depending on your need
 
 ```shell
 npm run compile
-npm run compile-viewers-watch # For Plot, Data Frame, Variable & IPyWidget Viewer
 ```
 
-Sometimes you will need to run `npm run clean` and even `rm -r out`.
+Sometimes you will need to run `npm run clean` and even `rm -r out dist`.
 This is especially true if you have added or removed files.
 
 ### Errors and Warnings

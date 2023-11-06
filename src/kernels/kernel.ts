@@ -4,8 +4,6 @@
 import uuid from 'uuid/v4';
 import type * as nbformat from '@jupyterlab/nbformat';
 import type { KernelMessage } from '@jupyterlab/services';
-import { Observable } from 'rxjs/Observable';
-import { ReplaySubject } from 'rxjs/ReplaySubject';
 import {
     CancellationTokenSource,
     Event,
@@ -25,7 +23,7 @@ import {
 } from '../platform/common/constants';
 import { IApplicationShell } from '../platform/common/application/types';
 import { WrappedError } from '../platform/errors/types';
-import { dispose, splitLines } from '../platform/common/helpers';
+import { splitLines } from '../platform/common/helpers';
 import { traceInfo, traceInfoIfCI, traceError, traceVerbose, traceWarning } from '../platform/logging';
 import { getDisplayPath, getFilePath } from '../platform/common/platform/fs-paths';
 import { Resource, IDisposable, IDisplayOptions } from '../platform/common/types';
@@ -48,7 +46,6 @@ import {
     InterruptResult,
     IStartupCodeProvider,
     KernelConnectionMetadata,
-    KernelSocketInformation,
     IBaseKernel,
     KernelActionSource,
     KernelHooks,
@@ -62,9 +59,10 @@ import { KernelProgressReporter } from '../platform/progress/kernelProgressRepor
 import { DisplayOptions } from './displayOptions';
 import { SilentExecutionErrorOptions } from './helpers';
 import dedent from 'dedent';
-import { IAnyMessageArgs } from '@jupyterlab/services/lib/kernel/kernel';
+import type { IAnyMessageArgs } from '@jupyterlab/services/lib/kernel/kernel';
 import { getKernelInfo } from './kernelInfo';
 import { KernelInterruptTimeoutError } from './errors/kernelInterruptTimeoutError';
+import { dispose } from '../platform/common/utils/lifecycle';
 
 const widgetVersionOutPrefix = 'e976ee50-99ed-4aba-9b6b-9dcd5634d07d:IPyWidgets:';
 /**
@@ -154,8 +152,8 @@ abstract class BaseKernel implements IBaseKernel {
     get disposing(): boolean {
         return this._disposing === true;
     }
-    get kernelSocket(): Observable<KernelSocketInformation | undefined> {
-        return this._kernelSocket.asObservable();
+    get onDidKernelSocketChange(): Event<void> {
+        return this._onDidKernelSocketChange.event;
     }
     private _session?: IKernelSession;
     /**
@@ -171,7 +169,7 @@ abstract class BaseKernel implements IBaseKernel {
     private _disposed?: boolean;
     private _disposing?: boolean;
     private _ignoreJupyterSessionDisposedErrors?: boolean;
-    private readonly _kernelSocket = new ReplaySubject<KernelSocketInformation | undefined>();
+    private readonly _onDidKernelSocketChange = new EventEmitter<void>();
     private readonly _onStatusChanged = new EventEmitter<KernelMessage.Status>();
     private readonly _onRestarted = new EventEmitter<void>();
     private readonly _onStarted = new EventEmitter<void>();
@@ -204,7 +202,7 @@ abstract class BaseKernel implements IBaseKernel {
         this.disposables.push(this._onStarted);
         this.disposables.push(this._onDisposed);
         this.disposables.push(this._onIPyWidgetVersionResolved);
-        this.disposables.push({ dispose: () => this._kernelSocket.unsubscribe() });
+        this.disposables.push(this._onDidKernelSocketChange);
         trackKernelResourceInformation(this.resourceUri, {
             kernelConnection: this.kernelConnectionMetadata,
             actionSource: this.creator,
@@ -697,7 +695,7 @@ abstract class BaseKernel implements IBaseKernel {
         }
         if (!this.hookedSessionForEvents.has(session)) {
             this.hookedSessionForEvents.add(session);
-            session.kernelSocket.subscribe(this._kernelSocket);
+            session.onDidKernelSocketChange((e) => this._onDidKernelSocketChange.fire(e));
             session.onDidDispose(() => {
                 traceInfoIfCI(
                     `Kernel got disposed as a result of session.onDisposed (1) ${getDisplayPath(

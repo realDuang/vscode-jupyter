@@ -5,10 +5,9 @@
 
 import type * as nbformat from '@jupyterlab/nbformat';
 import type WebSocketIsomorphic from 'isomorphic-ws';
-import { Event } from 'vscode';
+import { CancellationToken, Disposable, Event } from 'vscode';
 import { SemVer } from 'semver';
 import { Uri } from 'vscode';
-import { CancellationToken, Disposable } from 'vscode-jsonrpc';
 import { IAsyncDisposable, ICell, IDisplayOptions, IDisposable, Resource } from '../../platform/common/types';
 import { JupyterInstallError } from '../../platform/errors/jupyterInstallError';
 import { PythonEnvironment } from '../../platform/pythonEnvironments/info';
@@ -16,13 +15,12 @@ import {
     KernelConnectionMetadata,
     IJupyterConnection,
     GetServerOptions,
-    IKernelSocket,
     LiveRemoteKernelConnectionMetadata,
     RemoteKernelConnectionMetadata
 } from '../types';
 import { ClassType } from '../../platform/ioc/types';
 import { ContributedKernelFinderKind, IContributedKernelFinder } from '../internalTypes';
-import { IJupyterServerUri, IJupyterUriProvider, JupyterServerCollection, JupyterServerProvider } from '../../api';
+import { JupyterServerCollection, JupyterServerProvider } from '../../api';
 import { IQuickPickItemProvider } from '../../platform/common/providerBasedQuickPick';
 
 export type JupyterServerInfo = {
@@ -119,9 +117,6 @@ export interface IJupyterServerProvider {
     getOrStartServer(options: GetServerOptions): Promise<IJupyterConnection>;
 }
 
-export interface IInternalJupyterUriProvider extends IJupyterUriProvider {
-    readonly extensionId: string;
-}
 export type JupyterServerProviderHandle = {
     /**
      * Jupyter Server Provider Id.
@@ -136,25 +131,6 @@ export type JupyterServerProviderHandle = {
      */
     extensionId: string;
 };
-
-export const IJupyterUriProviderRegistration = Symbol('IJupyterUriProviderRegistration');
-
-export interface IJupyterUriProviderRegistration {
-    onDidChangeProviders: Event<void>;
-    readonly providers: ReadonlyArray<IInternalJupyterUriProvider>;
-    getProvider(extensionId: string, id: string): Promise<IInternalJupyterUriProvider | undefined>;
-    registerProvider(provider: IJupyterUriProvider, extensionId: string): IDisposable;
-    /**
-     * Temporary, until the new API is finalized.
-     * We need a way to get the displayName of the Server.
-     */
-    getDisplayNameIfProviderIsLoaded(providerHandle: JupyterServerProviderHandle): Promise<string | undefined>;
-    getJupyterServerUri(
-        serverHandle: JupyterServerProviderHandle,
-        doNotPromptForAuthInfo?: boolean
-    ): Promise<IJupyterServerUri>;
-}
-
 /**
  * Entry into our list of saved servers
  */
@@ -232,7 +208,6 @@ export interface IJupyterRequestCreator {
         getWebSocketProtocols?: () => string | string[] | undefined
     ): ClassType<WebSocket>;
     wrapWebSocketCtor(websocketCtor: ClassType<WebSocketIsomorphic>): ClassType<WebSocketIsomorphic>;
-    getWebsocket(id: string): IKernelSocket | undefined;
     getRequestInit(): RequestInit;
 }
 
@@ -278,6 +253,10 @@ export interface IRemoteKernelFinder
 export const IJupyterServerProviderRegistry = Symbol('IJupyterServerProviderRegistry');
 export interface IJupyterServerProviderRegistry {
     onDidChangeCollections: Event<{ added: JupyterServerCollection[]; removed: JupyterServerCollection[] }>;
+    activateThirdPartyExtensionAndFindCollection(
+        extensionId: string,
+        id: string
+    ): Promise<JupyterServerCollection | undefined>;
     readonly jupyterCollections: readonly JupyterServerCollection[];
     createJupyterServerCollection(
         extensionId: string,

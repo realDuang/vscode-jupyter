@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { INotebookMetadata } from '@jupyterlab/nbformat';
+import type { INotebookMetadata } from '@jupyterlab/nbformat';
 import {
     CancellationToken,
     CancellationTokenSource,
@@ -27,7 +27,7 @@ import {
     PYTHON_LANGUAGE,
     Telemetry
 } from '../../../platform/common/constants';
-import { dispose } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/utils/lifecycle';
 import { getDisplayPath } from '../../../platform/common/platform/fs-paths';
 import { IDisposable, IDisposableRegistry, IsWebExtension } from '../../../platform/common/types';
 import { getNotebookMetadata, getResourceType, isJupyterNotebook } from '../../../platform/common/utils';

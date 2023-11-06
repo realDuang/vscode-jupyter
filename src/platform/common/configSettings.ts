@@ -19,16 +19,15 @@ import {
     InteractiveWindowMode,
     InteractiveWindowViewColumn,
     IVariableQuery,
-    IVariableTooltipFields,
     IWatchableJupyterSettings,
     LoggingLevelSettingType,
     Resource,
     WidgetCDNs
 } from './types';
-import { debounceSync } from './utils/decorators';
 import { ISystemVariables, ISystemVariablesConstructor } from './variables/types';
 import { ConfigMigration } from './configMigration';
 import { noop } from './utils/misc';
+import { debounce } from './decorators';
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires */
 
@@ -100,12 +99,6 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     public enableExtendedKernelCompletions: boolean = false;
     public useOldKernelResolve: boolean = false;
     public formatStackTraces: boolean = false;
-
-    public variableTooltipFields: IVariableTooltipFields = {
-        python: {
-            Tensor: ['shape', 'dtype', 'device']
-        }
-    };
     // Privates should start with _ so that they are not read from the settings.json
     private _changeEmitter = new EventEmitter<void>();
     private _workspaceRoot: Resource;
@@ -223,7 +216,7 @@ export class JupyterSettings implements IWatchableJupyterSettings {
             // Configuration migration is asyncronous, so check the old configuration key if the new one isn't set
             const configValue = newKey && config.get(newKey) !== undefined ? config.get(newKey) : config.get(k);
             const val = systemVariables.resolveAny(configValue);
-            if (k !== 'variableTooltipFields' || val) {
+            if (val) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 (<any>this)[k] = val;
             }
@@ -286,7 +279,7 @@ export class JupyterSettings implements IWatchableJupyterSettings {
         await configMigration.migrateSettings();
     }
 
-    @debounceSync(1)
+    @debounce(1)
     private debounceChangeNotification() {
         this._changeEmitter.fire();
     }

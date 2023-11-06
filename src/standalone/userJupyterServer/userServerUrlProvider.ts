@@ -69,12 +69,13 @@ import { JupyterSelfCertsExpiredError } from '../../platform/errors/jupyterSelfC
 import { Deferred, createDeferred } from '../../platform/common/utils/async';
 import { IFileSystem } from '../../platform/common/platform/types';
 import { RemoteKernelSpecCacheFileName } from '../../kernels/jupyter/constants';
-import { dispose } from '../../platform/common/helpers';
-import { Disposables } from '../../platform/common/utils';
+import { dispose } from '../../platform/common/utils/lifecycle';
 import { JupyterHubPasswordConnect } from '../userJupyterHubServer/jupyterHubPasswordConnect';
 import { sendTelemetryEvent } from '../../telemetry';
 import { getTelemetrySafeHashedString } from '../../platform/telemetry/helpers';
 import { generateIdFromRemoteProvider } from '../../kernels/jupyter/jupyterUtils';
+import { isWeb } from '../../platform/vscode-path/platform';
+import { DisposableBase } from '../../platform/common/utils/lifecycle';
 
 export const UserJupyterServerUriListKey = 'user-jupyter-server-uri-list';
 export const UserJupyterServerUriListKeyV2 = 'user-jupyter-server-uri-list-version2';
@@ -83,10 +84,9 @@ const GlobalStateUserAllowsInsecureConnections = 'DataScienceAllowInsecureConnec
 
 @injectable()
 export class UserJupyterServerUrlProvider
-    extends Disposables
+    extends DisposableBase
     implements IExtensionSyncActivationService, IDisposable, JupyterServerProvider, JupyterServerCommandProvider
 {
-    readonly id: string = UserJupyterServerPickerProviderId;
     public readonly extensionId: string = JVSC_EXTENSION_ID;
     readonly documentation = Uri.parse('https://aka.ms/vscodeJuptyerExtKernelPickerExistingServer');
     readonly displayName: string = DataScience.UserJupyterServerUrlProviderDisplayName;
@@ -124,7 +124,10 @@ export class UserJupyterServerUrlProvider
         @inject(IExtensionContext) private readonly context: IExtensionContext,
         @inject(IFileSystem) private readonly fs: IFileSystem,
         @inject(IJupyterServerProviderRegistry)
-        private readonly jupyterServerProviderRegistry: IJupyterServerProviderRegistry
+        private readonly jupyterServerProviderRegistry: IJupyterServerProviderRegistry,
+        @optional()
+        @inject(Date.now().toString()) // No such item to be injected
+        public readonly id: string = UserJupyterServerPickerProviderId
     ) {
         super();
         disposables.push(this);
@@ -159,17 +162,18 @@ export class UserJupyterServerUrlProvider
     }
     activate() {
         // Register this ASAP.
-        const collection = this.jupyterServerProviderRegistry.createJupyterServerCollection(
-            JVSC_EXTENSION_ID,
-            this.id,
-            this.displayName,
-            this
+        const collection = this._register(
+            this.jupyterServerProviderRegistry.createJupyterServerCollection(
+                JVSC_EXTENSION_ID,
+                this.id,
+                this.displayName,
+                this
+            )
         );
-        this.disposables.push(collection);
         collection.commandProvider = this;
         collection.documentation = this.documentation;
-        this.onDidChangeHandles(() => this._onDidChangeServers.fire(), this, this.disposables);
-        this.disposables.push(
+        this._register(this.onDidChangeHandles(() => this._onDidChangeServers.fire(), this));
+        this._register(
             this.commandManager.registerCommand('dataScience.ClearUserProviderJupyterServerCache', async () => {
                 await Promise.all([
                     this.oldStorage.clear().catch(noop),
@@ -205,8 +209,12 @@ export class UserJupyterServerUrlProvider
         _token: CancellationToken
     ): Promise<JupyterServer | undefined> {
         const token = new CancellationTokenSource();
-        this.disposables.push(token);
-        this.disposables.push(new Disposable(() => token.cancel()));
+        this._register(
+            new Disposable(() => {
+                token.cancel(); // First cancel, then dispose.
+                token.dispose();
+            })
+        );
         try {
             const url = 'url' in command ? command.url : undefined;
             const handleOrBack = await this.captureRemoteJupyterUrl(token.token, url);
@@ -550,7 +558,7 @@ export class UserJupyterServerUrlProvider
                                 }
                             }
                         } finally {
-                            this.disposables.push(...passwordDisposables);
+                            passwordDisposables.forEach((d) => this._register(d));
                         }
                     }
                     if (token.isCancellationRequested) {
@@ -790,10 +798,14 @@ export class UserJupyterServerUriInput {
         initialErrorMessage: string = '',
         disposables: Disposable[]
     ): Promise<{ url: string; jupyterServerUri: IJupyterServerUri }> {
-        if (!initialValue) {
+        // In the browser, users are prompted to allow access to clipboard, and
+        // thats not a good UX, because as soon as user clicks kernel picker they get prompted to allow clipbpard access
+        if (!initialValue && !isWeb) {
             try {
                 const text = await this.clipboard.readText().catch(() => '');
-                const parsedUri = Uri.parse(text.trim(), true);
+                const parsedUri = text.trim().startsWith('https://github.com/')
+                    ? undefined
+                    : Uri.parse(text.trim(), true);
                 // Only display http/https uris.
                 initialValue = text && parsedUri && parsedUri.scheme.toLowerCase().startsWith('http') ? text : '';
             } catch {

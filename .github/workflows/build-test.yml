@@ -27,8 +27,8 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: 16.14.2
-  NPM_VERSION: 8.15.1
+  NODE_VERSION: 18.15.0
+  NPM_VERSION: 9.5.0
   PYTHON_VERSION: 3.8
   JULIA_VERSION: 1.5.2
   MOCHA_REPORTER_JUNIT: true # Use the mocha-multi-reporters and send output to both console (spec) and JUnit (mocha-junit-reporter). Also enables a reporter which exits the process running the tests if it haven't already.
@@ -66,11 +66,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install dependencies for native modules
-        run: |
-          sudo apt-get update
-          sudo apt-get install libpango1.0-dev libgif-dev
 
       - name: Use Node ${{env.NODE_VERSION}}
         uses: actions/setup-node@v3
@@ -157,11 +152,8 @@ jobs:
       - name: Run linting on TypeScript code (eslint)
         run: npm run lint
 
-      - name: Run prettier on TypeScript code
-        run: npx prettier 'src/**/*.ts*' --check
-
       - name: Run prettier on JavaScript code
-        run: npx prettier 'build/**/*.js' --check
+        run: npm run format-check
 
       - name: Use Python ${{env.PYTHON_VERSION}}
         uses: actions/setup-python@v4
@@ -194,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "windows-latest"]
+        os: ['ubuntu-latest', 'windows-latest']
         test-suite: [ts-unit]
     steps:
       - name: Checkout
@@ -240,7 +232,6 @@ jobs:
           path: ./out
           key: ${{runner.os}}-${{env.CACHE_OUT_DIRECTORY}}-${{hashFiles('src/**')}}
 
-
       # This is faster than running `npm ci`, we do not want to build zmq, etc.
       # Let that happen in other jobs, this job needs to be fast
       - name: npm ci
@@ -283,13 +274,23 @@ jobs:
       fail-fast: false
       matrix:
         jupyterConnection: [raw] # valid values include raw = uzing zqm, local = using local jupyter, remote = using remote jupyter, web = using remote jupyter in web mode
-        python: [python]  # valid values include python,conda,noPython
+        python: [python] # valid values include python,conda,noPython
         pythonVersion: ['3.10']
         # Whether we're using stable (<empty>) or pre-release versions of Python packages.
         # When installing pre-release versions, we're only focused on jupyter & related packages.
         # Not pre-release versions of pandas, numpy or other such packages that are not core to Jupyter.
         packageVersion: ['']
-        tags: ['^[^@]+$|@mandatory', '@kernelCore', '@widgets', '@iw', '@webview|@export|@lsp|@variableViewer', '@debugger', '@kernelPicker|@python|@jupyter', '@kernelInstall']
+        tags:
+          [
+            '^[^@]+$|@mandatory',
+            '@kernelCore',
+            '@widgets',
+            '@iw',
+            '@webview|@export|@lsp|@variableViewer',
+            '@debugger',
+            '@kernelPicker|@python|@jupyter',
+            '@kernelInstall'
+          ]
         # We're not running CI on macOS for now because it's one less matrix entry to lower the number of runners used,
         # macOS runners are expensive, and we assume that Ubuntu is enough to cover the UNIX case.
         os: [ubuntu-latest]
@@ -298,7 +299,7 @@ jobs:
         # Basically with exclude, you can exclude any of the combinations from the result matrix.
         # & with include, you can include additional items to the result matrix.
         include:
-        # Mandatory tests
+          # Mandatory tests
           - jupyterConnection: remote
             python: python
             pythonVersion: '3.10'
@@ -324,7 +325,7 @@ jobs:
             tags: '^[^@]+$|@mandatory'
             os: windows-latest
             ipywidgetsVersion: ''
-        # IPyWidgets 8
+          # IPyWidgets 8
           - jupyterConnection: raw
             python: python
             pythonVersion: '3.10'
@@ -337,14 +338,14 @@ jobs:
             tags: '@widgets'
             os: ubuntu-latest
             ipywidgetsVersion: '8'
-        # Conda
+          # Conda
           - jupyterConnection: raw
             python: conda
             pythonVersion: '3.10'
             tags: '^[^@]+$|@mandatory|@python'
             os: ubuntu-latest
             ipywidgetsVersion: ''
-        # Pre-Release Versions
+          # Pre-Release Versions
           - jupyterConnection: raw
             python: python
             pythonVersion: '3.10'
@@ -352,13 +353,13 @@ jobs:
             tags: '^[^@]+$|@mandatory|@kernelCore|@python|@jupyter'
             os: ubuntu-latest
             ipywidgetsVersion: ''
-        # Without Python
+          # Without Python
           - jupyterConnection: raw
             python: noPython
             tags: '@nonPython'
             os: ubuntu-latest
             ipywidgetsVersion: ''
-        # Misc
+          # Misc
           - jupyterConnection: local
             python: python
             pythonVersion: '3.10'
@@ -377,8 +378,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Generate Tag Variable
-        run:
-          echo "TAGSVAR=${{ matrix.tags }}}" >> $GITHUB_ENV
+        run: echo "TAGSVAR=${{ matrix.tags }}}" >> $GITHUB_ENV
 
       - name: Generate Friendly Variable
         run:
@@ -509,13 +509,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      - name: Cache compiled TS files
-        id: out-cache
-        uses: actions/cache@v3
-        with:
-          path: ./out
-          key: ${{runner.os}}-${{env.CACHE_OUT_DIRECTORY}}-${{hashFiles('src/**')}}
-
       # For faster/better builds of sdists.
       - run: python -m pip install wheel
         shell: bash
@@ -575,14 +568,14 @@ jobs:
         # 2. In user's home folder (pythreejs will be installed in there)
         # 3. In system folder (all users) (matplotlib will be installed in there)
         run: |
-            # Uninstall pythreejs from the sys prefix folder and ensure the widget scripts are installed
-            # into the user directory.
-            export PYTHON_EXECUTABLE=$(which python)
-            echo $PYTHON_EXECUTABLE
-            python -m jupyter nbextension uninstall --sys-prefix --py pythreejs
-            python -m jupyter nbextension install --user --py pythreejs
-            python -m jupyter nbextension uninstall --sys-prefix --py ipympl
-            sudo $PYTHON_EXECUTABLE -m jupyter nbextension install --system --py ipympl
+          # Uninstall pythreejs from the sys prefix folder and ensure the widget scripts are installed
+          # into the user directory.
+          export PYTHON_EXECUTABLE=$(which python)
+          echo $PYTHON_EXECUTABLE
+          python -m jupyter nbextension uninstall --sys-prefix --py pythreejs
+          python -m jupyter nbextension install --user --py pythreejs
+          python -m jupyter nbextension uninstall --sys-prefix --py ipympl
+          sudo $PYTHON_EXECUTABLE -m jupyter nbextension install --system --py ipympl
 
       - name: Pip List
         if: matrix.python != 'noPython'
@@ -620,6 +613,8 @@ jobs:
         # if: steps.out-cache.outputs.cache-hit != 'true' && matrix.jupyterConnection != 'web'
         env:
           VSC_JUPYTER_CI_TEST_GREP: ${{ matrix.tags }}
+          VSC_JUPYTER_CI_SKIP_WEB_BUNDLE: 1
+          VSC_JUPYTER_CI_FAST_COMPILATION: 1
 
       # Used by tests for non-python kernels.
       # Test are enabled via env variable `VSC_JUPYTER_CI_RUN_NON_PYTHON_NB_TEST`
@@ -838,25 +833,20 @@ jobs:
         with:
           name: 'ms-toolsai-jupyter-insiders.vsix'
 
-      - name: Install libsodium and gnutls
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install libsodium gnutls
-        shell: bash
-
-      - name: Install dependencies for native modules
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install libpango1.0-dev libgif-dev
-
+      # This is faster than running `npm ci`, we do not want to build zmq, etc.
+      # Let that happen in other jobs, this job needs to be fast
       - name: npm ci
-        uses: ./.github/actions/npm-ci
+        run: npm ci --ignore-scripts --prefer-offline --no-audit
+
+      # Run again, as the download of zmq binaries could have failed with 403 errors
+      - run: npm run postinstall
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
 
       - name: pip install system test requirements
         run: |
-          python -m pip install --upgrade -r build/venv-test-requirements.txt
-          python -m pip --disable-pip-version-check install -t ./pythonFiles/lib/python --no-cache-dir --implementation py --no-deps --upgrade -r requirements.txt
+          python -m pip install --upgrade -r build/venv-smoke-test-requirements.txt
         shell: bash
 
       # Compile the test files.
