@@ -33,7 +33,6 @@ import {
     IWatchableJupyterSettings
 } from '../../../platform/common/types';
 import { JupyterKernelSessionFactory } from './jupyterKernelSessionFactory';
-import { IWorkspaceService } from '../../../platform/common/application/types';
 import { JupyterConnection } from '../connection/jupyterConnection';
 import { IJupyterServerProvider, IJupyterKernelService } from '../types';
 import { DisplayOptions } from '../../displayOptions';
@@ -47,7 +46,6 @@ suite('New Jupyter Kernel Session Factory', () => {
     let jupyterNotebookProvider: IJupyterServerProvider;
     let jupyterConnection: JupyterConnection;
     let asyncDisposables: IAsyncDisposable[];
-    let workspaceService: IWorkspaceService;
     let kernelService: IJupyterKernelService;
     let configService: IConfigurationService;
     let settings: IWatchableJupyterSettings;
@@ -123,7 +121,6 @@ suite('New Jupyter Kernel Session Factory', () => {
         jupyterNotebookProvider = mock<IJupyterServerProvider>();
         jupyterConnection = mock<JupyterConnection>();
         asyncDisposables = [] as any;
-        workspaceService = mock<IWorkspaceService>();
         kernelService = mock<IJupyterKernelService>();
         configService = mock<IConfigurationService>();
         settings = mock<IWatchableJupyterSettings>();
@@ -140,7 +137,6 @@ suite('New Jupyter Kernel Session Factory', () => {
         when(settings.jupyterLaunchTimeout).thenReturn(jupyterLaunchTimeout);
         when(configService.getSettings(anything())).thenReturn(instance(settings));
 
-        when(workspaceService.computeWorkingDirectory(anything())).thenResolve('someDir');
         when(
             kernelService.ensureKernelIsUsable(anything(), kernelConnectionMetadata, ui, token.token, false)
         ).thenResolve();
@@ -153,7 +149,6 @@ suite('New Jupyter Kernel Session Factory', () => {
         when(connection.displayName).thenReturn('Hello World');
         when(connection.dispose()).thenReturn();
         when(connection.getAuthHeader).thenReturn();
-        when(connection.getWebsocketProtocols).thenReturn();
         when(connection.providerId).thenReturn('_builtin.something');
         when(connection.rootDirectory).thenReturn(Uri.file('someDir'));
         when(connection.token).thenReturn('1234');
@@ -174,7 +169,6 @@ suite('New Jupyter Kernel Session Factory', () => {
             instance(jupyterNotebookProvider),
             instance(jupyterConnection),
             asyncDisposables as any,
-            instance(workspaceService),
             instance(kernelService),
             instance(configService)
         );
@@ -256,7 +250,6 @@ suite('New Jupyter Kernel Session Factory', () => {
         verify(kernelService.ensureKernelIsUsable(anything(), anything(), anything(), anything(), false)).never();
         verify(jupyterNotebookProvider.getOrStartServer(anything())).once();
         verify(sessionManager.startNew(anything(), anything())).once();
-        verify(workspaceService.computeWorkingDirectory(anything())).once();
         verify(jupyterConnection.createConnectionInfo(anything())).never();
 
         when(kernel.status).thenReturn('idle');
@@ -339,7 +332,6 @@ suite('New Jupyter Kernel Session Factory', () => {
 
         verify(kernelService.ensureKernelIsUsable(anything(), anything(), anything(), anything(), false)).never();
         verify(jupyterNotebookProvider.getOrStartServer(anything())).never();
-        verify(workspaceService.computeWorkingDirectory(anything())).never();
         verify(sessionManager.connectTo(anything())).once();
         verify(sessionManager.startNew(anything(), anything())).never();
         verify(jupyterConnection.createConnectionInfo(anything())).once();
@@ -367,7 +359,6 @@ suite('New Jupyter Kernel Session Factory', () => {
 
         verify(kernelService.ensureKernelIsUsable(anything(), anything(), anything(), anything(), false)).never();
         verify(jupyterNotebookProvider.getOrStartServer(anything())).never();
-        verify(workspaceService.computeWorkingDirectory(anything())).never();
         verify(sessionManager.startNew(anything(), anything())).once();
         verify(jupyterConnection.createConnectionInfo(anything())).once();
         verify(contentsManager.delete(anything())).never();
@@ -397,7 +388,6 @@ suite('New Jupyter Kernel Session Factory', () => {
 
         verify(kernelService.ensureKernelIsUsable(anything(), anything(), anything(), anything(), false)).never();
         verify(jupyterNotebookProvider.getOrStartServer(anything())).never();
-        verify(workspaceService.computeWorkingDirectory(anything())).never();
         verify(sessionManager.startNew(anything(), anything())).once();
         verify(jupyterConnection.createConnectionInfo(anything())).once();
 
@@ -426,7 +416,6 @@ suite('New Jupyter Kernel Session Factory', () => {
 
         verify(kernelService.ensureKernelIsUsable(anything(), anything(), anything(), anything(), false)).never();
         verify(jupyterNotebookProvider.getOrStartServer(anything())).never();
-        verify(workspaceService.computeWorkingDirectory(anything())).never();
         verify(sessionManager.startNew(anything(), anything())).once();
         verify(jupyterConnection.createConnectionInfo(anything())).once();
 
@@ -455,7 +444,6 @@ suite('New Jupyter Kernel Session Factory', () => {
 
         verify(kernelService.ensureKernelIsUsable(anything(), anything(), anything(), anything(), false)).never();
         verify(jupyterNotebookProvider.getOrStartServer(anything())).never();
-        verify(workspaceService.computeWorkingDirectory(anything())).never();
         verify(sessionManager.startNew(anything(), anything())).once();
         verify(jupyterConnection.createConnectionInfo(anything())).once();
         assert.strictEqual(capture(sessionManager.startNew).first()[0].type, 'notebook');

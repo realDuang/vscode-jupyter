@@ -2,23 +2,17 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, named } from 'inversify';
-import { ConfigurationTarget, Memento } from 'vscode';
-import { IApplicationShell } from '../../../../platform/common/application/types';
+import { ConfigurationTarget, Memento, Uri, env, window } from 'vscode';
 import { Telemetry } from '../../../../platform/common/constants';
-import {
-    GLOBAL_MEMENTO,
-    IConfigurationService,
-    IHttpClient,
-    IMemento,
-    WidgetCDNs
-} from '../../../../platform/common/types';
+import { GLOBAL_MEMENTO, IConfigurationService, IMemento, WidgetCDNs } from '../../../../platform/common/types';
 import { createDeferred, createDeferredFromPromise, Deferred } from '../../../../platform/common/utils/async';
 import { Common, DataScience } from '../../../../platform/common/utils/localize';
 import { noop } from '../../../../platform/common/utils/misc';
-import { traceError, traceInfo, traceVerbose } from '../../../../platform/logging';
+import { traceError, traceInfo, traceInfoIfCI, traceVerbose } from '../../../../platform/logging';
 import { ConsoleForegroundColors } from '../../../../platform/logging/types';
 import { sendTelemetryEvent } from '../../../../telemetry';
 import { IWidgetScriptSourceProvider, WidgetScriptSource } from '../types';
+import { HttpClient } from '../../../../platform/common/net/httpClient';
 
 // Source borrowed from https://github.com/jupyter-widgets/ipywidgets/blob/54941b7a4b54036d089652d91b39f937bde6b6cd/packages/html-manager/src/libembed-amd.ts#L33
 const unpgkUrl = 'https://unpkg.com/';
@@ -74,6 +68,7 @@ function getCDNPrefix(cdn?: WidgetCDNs): string | undefined {
  */
 @injectable()
 export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvider {
+    id = 'cdn';
     private cache = new Map<string, Promise<WidgetScriptSource>>();
     private isOnCDNCache = new Map<string, Promise<boolean>>();
     private readonly notifiedUserAboutWidgetScriptNotFound = new Set<string>();
@@ -83,10 +78,8 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
     }
     private configurationPromise?: Deferred<void>;
     constructor(
-        @inject(IApplicationShell) private readonly appShell: IApplicationShell,
         @inject(IMemento) @named(GLOBAL_MEMENTO) private readonly globalMemento: Memento,
-        @inject(IConfigurationService) private readonly configurationSettings: IConfigurationService,
-        @inject(IHttpClient) private readonly httpClient: IHttpClient
+        @inject(IConfigurationService) private readonly configurationSettings: IConfigurationService
     ) {}
     public dispose() {
         this.cache.clear();
@@ -103,8 +96,9 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
             return true;
         }
         const promise = (async () => {
-            const unpkgPromise = createDeferredFromPromise(this.httpClient.exists(`${unpgkUrl}${moduleName}`));
-            const jsDeliverPromise = createDeferredFromPromise(this.httpClient.exists(`${jsdelivrUrl}${moduleName}`));
+            const httpClient = new HttpClient();
+            const unpkgPromise = createDeferredFromPromise(httpClient.exists(`${unpgkUrl}${moduleName}`));
+            const jsDeliverPromise = createDeferredFromPromise(httpClient.exists(`${jsdelivrUrl}${moduleName}`));
             await Promise.race([unpkgPromise.promise, jsDeliverPromise.promise]);
             if (unpkgPromise.value || jsDeliverPromise.value) {
                 return true;
@@ -130,6 +124,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
     ): Promise<WidgetScriptSource> {
         // If the webview is not online, then we cannot use the CDN.
         if (isWebViewOnline === false) {
+            traceInfoIfCI(`Webview is offline, cannot use CDN for ${moduleName}`);
             this.warnIfNoAccessToInternetFromWebView(moduleName).catch(noop);
             return {
                 moduleName
@@ -139,6 +134,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
             this.cdnProviders.length === 0 &&
             this.globalMemento.get<boolean>(GlobalStateKeyToTrackIfUserConfiguredCDNAtLeastOnce, false)
         ) {
+            traceInfoIfCI(`No CDN providers and user configured CDN`);
             return {
                 moduleName
             };
@@ -199,7 +195,8 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
         // Make sure CDN has the item before returning it.
         try {
             const downloadUrl = await this.generateDownloadUri(moduleName, moduleVersion, cdn);
-            if (downloadUrl && (await this.httpClient.exists(downloadUrl))) {
+            const httpClient = new HttpClient();
+            if (downloadUrl && (await httpClient.exists(downloadUrl))) {
                 return downloadUrl;
             }
         } catch (ex) {
@@ -216,7 +213,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
             return;
         }
         this.notifiedUserAboutWidgetScriptNotFound.add(moduleName);
-        const selection = await this.appShell.showWarningMessage(
+        const selection = await window.showWarningMessage(
             DataScience.cdnWidgetScriptNotAccessibleWarningMessage(moduleName, JSON.stringify(this.cdnProviders)),
             Common.ok,
             Common.doNotShowAgain,
@@ -226,7 +223,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
             case Common.doNotShowAgain:
                 return this.globalMemento.update(GlobalStateKeyToNeverWarnAboutNoNetworkAccess, true);
             case Common.moreInfo:
-                return this.appShell.openUrl('https://aka.ms/PVSCIPyWidgets');
+                return env.openExternal(Uri.parse('https://aka.ms/PVSCIPyWidgets'));
             default:
                 noop();
         }
@@ -246,7 +243,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
         }
         this.configurationPromise = createDeferred();
         sendTelemetryEvent(Telemetry.IPyWidgetPromptToUseCDN);
-        const selection = await this.appShell.showInformationMessage(
+        const selection = await window.showInformationMessage(
             DataScience.useCDNForWidgetsNoInformation,
             { modal: true },
             Common.ok,
@@ -275,7 +272,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
                 break;
             }
             case Common.moreInfo: {
-                this.appShell.openUrl('https://aka.ms/PVSCIPyWidgets');
+                void env.openExternal(Uri.parse('https://aka.ms/PVSCIPyWidgets'));
                 break;
             }
             default:
@@ -304,7 +301,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
             return;
         }
         this.notifiedUserAboutWidgetScriptNotFound.add(moduleName);
-        const selection = await this.appShell.showWarningMessage(
+        const selection = await window.showWarningMessage(
             DataScience.widgetScriptNotFoundOnCDNWidgetMightNotWork(
                 moduleName,
                 version,
@@ -318,7 +315,7 @@ export class CDNWidgetScriptSourceProvider implements IWidgetScriptSourceProvide
             case Common.doNotShowAgain:
                 return this.globalMemento.update(GlobalStateKeyToNeverWarnAboutScriptsNotFoundOnCDN, true);
             case Common.reportThisIssue:
-                return this.appShell.openUrl('https://aka.ms/CreatePVSCDataScienceIssue');
+                return env.openExternal(Uri.parse('https://aka.ms/CreatePVSCDataScienceIssue'));
             default:
                 noop();
         }

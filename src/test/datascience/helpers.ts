@@ -28,7 +28,6 @@ import { IControllerRegistration } from '../../notebooks/controllers/types';
 import { Matcher } from 'ts-mockito/lib/matcher/type/Matcher';
 import { IInterpreterService } from '../../platform/interpreter/contracts';
 import { isEqual } from '../../platform/vscode-path/resources';
-import { IWorkspaceService } from '../../platform/common/application/types';
 import { instance } from 'ts-mockito';
 
 export async function openNotebook(ipynbFile: vscode.Uri) {
@@ -56,16 +55,13 @@ export function defaultDataScienceSettings(): IJupyterSettings {
         notebookFileRoot: '${fileDirname}',
         useDefaultConfigForJupyter: true,
         jupyterInterruptTimeout: 10000,
-        searchForJupyter: true,
         errorBackgroundColor: '#FFFFFF',
         sendSelectionToInteractiveWindow: false,
         variableExplorerExclude: 'module;function;builtin_function_or_method',
         codeRegularExpression: '^(#\\s*%%|#\\s*\\<codecell\\>|#\\s*In\\[\\d*?\\]|#\\s*In\\[ \\])',
         markdownRegularExpression: '^(#\\s*%%\\s*\\[markdown\\]|#\\s*\\<markdowncell\\>)',
-        generateSVGPlots: false,
         runStartupCommands: '',
         debugJustMyCode: true,
-        variableQueries: [],
         jupyterCommandLineArguments: [],
         widgetScriptSources: [],
         interactiveWindowMode: 'single'
@@ -113,10 +109,10 @@ export async function setActiveInterpreter(
     interpreter: vscode.Uri | undefined
 ) {
     if (interpreter) {
-        const [pythonApi, api] = await Promise.all([apiProvider.getNewApi(), initialize()]);
+        const [pythonApi] = await Promise.all([apiProvider.getNewApi(), initialize()]);
         // if we have one workspace, then use the Uri of the workspace folder.
-        const workspace = api.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
-        resource = workspace.workspaceFolders?.length === 1 ? workspace.workspaceFolders[0].uri : resource;
+        resource =
+            vscode.workspace.workspaceFolders?.length === 1 ? vscode.workspace.workspaceFolders[0].uri : resource;
         await pythonApi?.environments.updateActiveEnvironmentPath(getFilePath(interpreter), resource);
     }
 }
@@ -191,7 +187,7 @@ export async function runCurrentFile(interactiveWindowProvider: IInteractiveWind
     await vscode.window.showTextDocument(file, vscode.ViewColumn.One);
     const activeInteractiveWindow = (await interactiveWindowProvider.getOrCreate(file.uri)) as InteractiveWindow;
     await waitForInteractiveWindow(activeInteractiveWindow);
-    await vscode.commands.executeCommand(Commands.RunFileInInteractiveWindows, file.uri);
+    await vscode.commands.executeCommand(Commands.RunAllCells, file.uri);
     return activeInteractiveWindow;
 }
 

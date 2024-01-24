@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, named } from 'inversify';
-import { EventEmitter, Memento, Uri, ViewColumn } from 'vscode';
+import { EventEmitter, Memento, Uri, ViewColumn, env, window } from 'vscode';
 
 import { capturePerfTelemetry, sendTelemetryEvent } from '../../../telemetry';
 import { JupyterDataRateLimitError } from '../../../platform/errors/jupyterDataRateLimitError';
@@ -20,11 +20,7 @@ import {
 import { isValidSliceExpression, preselectedSliceExpression } from '../../webview-side/data-explorer/helpers';
 import { CheckboxState } from '../../../platform/telemetry/constants';
 import { IKernel } from '../../../kernels/types';
-import {
-    IWebviewPanelProvider,
-    IWorkspaceService,
-    IApplicationShell
-} from '../../../platform/common/application/types';
+import { IWebviewPanelProvider } from '../../../platform/common/application/types';
 import { HelpLinks, Telemetry } from '../../../platform/common/constants';
 import { traceError, traceInfo } from '../../../platform/logging';
 import {
@@ -75,8 +71,6 @@ export class DataViewer extends WebviewPanelHost<IDataViewerMapping> implements 
     constructor(
         @inject(IWebviewPanelProvider) provider: IWebviewPanelProvider,
         @inject(IConfigurationService) configuration: IConfigurationService,
-        @inject(IWorkspaceService) workspaceService: IWorkspaceService,
-        @inject(IApplicationShell) private applicationShell: IApplicationShell,
         @inject(IMemento) @named(GLOBAL_MEMENTO) readonly globalMemento: Memento,
         @inject(IDataScienceErrorHandler) readonly errorHandler: IDataScienceErrorHandler,
         @inject(IExtensionContext) readonly context: IExtensionContext
@@ -85,7 +79,6 @@ export class DataViewer extends WebviewPanelHost<IDataViewerMapping> implements 
         super(
             configuration,
             provider,
-            workspaceService,
             (c, v, d) => new DataViewerMessageListener(c, v, d),
             dataExplorerDir,
             [joinPath(dataExplorerDir, 'dataExplorer.js')],
@@ -296,14 +289,12 @@ export class DataViewer extends WebviewPanelHost<IDataViewerMapping> implements 
             if (e instanceof JupyterDataRateLimitError) {
                 traceError(e.message);
                 const actionTitle = localize.DataScience.pythonInteractiveHelpLink;
-                this.applicationShell
-                    .showErrorMessage(localize.DataScience.jupyterDataRateExceeded, actionTitle)
-                    .then((v) => {
-                        // User clicked on the link, open it.
-                        if (v === actionTitle) {
-                            this.applicationShell.openUrl(HelpLinks.JupyterDataRateHelpLink);
-                        }
-                    }, noop);
+                window.showErrorMessage(localize.DataScience.jupyterDataRateExceeded, actionTitle).then((v) => {
+                    // User clicked on the link, open it.
+                    if (v === actionTitle) {
+                        void env.openExternal(Uri.parse(HelpLinks.JupyterDataRateHelpLink));
+                    }
+                }, noop);
                 this.dispose();
             }
             traceError(e);

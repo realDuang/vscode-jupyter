@@ -11,7 +11,6 @@ import * as os from 'os';
 import { EXTENSION_ROOT_DIR_FOR_TESTS, IS_MULTI_ROOT_TEST, IS_REMOTE_NATIVE_TEST } from './constants.node';
 import { noop, sleep } from './core';
 import { isCI } from '../platform/common/constants';
-import { IWorkspaceService } from '../platform/common/application/types';
 import { generateScreenShotFileName, initializeCommonApi } from './common';
 import { IDisposable } from '../platform/common/types';
 import { swallowExceptions } from '../platform/common/utils/misc';
@@ -41,16 +40,11 @@ export async function setAutoSaveDelayInWorkspaceRoot(delayinMS: number) {
     return retryAsync(setAutoSaveDelay)(undefined, vscode.ConfigurationTarget.Workspace, delayinMS);
 }
 
-export async function getExtensionSettings(resource: Uri | undefined, workspaceService: IWorkspaceService) {
+export async function getExtensionSettings(resource: Uri | undefined) {
     const pythonSettings =
         require('../platform/common/configSettings') as typeof import('../platform/common/configSettings');
     const systemVariables = await import('../platform/common/variables/systemVariables.node');
-    return pythonSettings.JupyterSettings.getInstance(
-        resource,
-        systemVariables.SystemVariables,
-        'node',
-        workspaceService
-    );
+    return pythonSettings.JupyterSettings.getInstance(resource, systemVariables.SystemVariables, 'node');
 }
 export function retryAsync(this: any, wrapped: Function, retryCount: number = 2) {
     return async (...args: any[]) => {
@@ -105,7 +99,6 @@ async function setPythonPathInWorkspace(
     const prop: 'workspaceFolderValue' | 'workspaceValue' =
         config === vscode.ConfigurationTarget.Workspace ? 'workspaceValue' : 'workspaceFolderValue';
     if (!value || value[prop] !== pythonPath) {
-        console.log(`Updating Interpreter path to ${pythonPath} in workspace`);
         await settings.update('pythonPath', pythonPath, config).then(noop, noop);
         await settings.update('defaultInterpreterPath', pythonPath, config).then(noop, noop);
         if (config === vscode.ConfigurationTarget.Global) {
@@ -196,7 +189,6 @@ export async function captureScreenShot(contextOrFileName: string | Mocha.Contex
     try {
         const screenshot = require('screenshot-desktop');
         await screenshot({ filename });
-        console.info(`Screenshot captured into ${filename}`);
     } catch (ex) {
         console.error(`Failed to capture screenshot into ${filename}`, ex);
     }
@@ -253,7 +245,6 @@ export function initializeCommonNodeApi() {
                 await commands.executeCommand('jupyter.selectjupyteruri', Uri.parse(url));
                 return { url, dispose: noop };
             } else {
-                console.info(`Jupyter not started and set to local`); // This is the default
                 return { url: '', dispose: noop };
             }
         },

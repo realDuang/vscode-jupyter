@@ -8,17 +8,16 @@ import {
     Event,
     EventEmitter,
     Uri,
-    WorkspaceConfiguration
+    WorkspaceConfiguration,
+    workspace
 } from 'vscode';
 import { LogLevel } from '../logging/types';
-import { IWorkspaceService } from './application/types';
 import { isTestExecution } from './constants';
 import {
     IExperiments,
     ILoggingSettings,
     InteractiveWindowMode,
     InteractiveWindowViewColumn,
-    IVariableQuery,
     IWatchableJupyterSettings,
     LoggingLevelSettingType,
     Resource,
@@ -49,21 +48,18 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     public jupyterLaunchRetries: number = 3;
     public notebookFileRoot: string = '';
     public useDefaultConfigForJupyter: boolean = false;
-    public searchForJupyter: boolean = false;
     public sendSelectionToInteractiveWindow: boolean = false;
     public normalizeSelectionForInteractiveWindow: boolean = true;
     public splitRunFileIntoCells: boolean = true;
     public markdownRegularExpression: string = '';
     public codeRegularExpression: string = '';
     public errorBackgroundColor: string = '';
-    public ignoreVscodeTheme: boolean = false;
     public variableExplorerExclude: string = '';
     public decorateCells: 'currentCell' | 'allCells' | 'disabled' = 'currentCell';
     public enableCellCodeLens: boolean = false;
     public askForLargeDataFrames: boolean = false;
     public enableAutoMoveToNextCell: boolean = false;
     public askForKernelRestart: boolean = false;
-    public generateSVGPlots: boolean = false;
     public codeLenses: string = '';
     public debugCodeLenses: string = '';
     public debugpyDistPath: string = '';
@@ -71,13 +67,11 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     public magicCommandsAsComments: boolean = false;
     public pythonExportMethod: 'direct' | 'commentMagics' | 'nbconvert' = 'direct';
     public stopOnError: boolean = false;
-    public remoteDebuggerPort: number = 0;
     public addGotoCodeLenses: boolean = false;
     public runStartupCommands: string | string[] = [];
     public debugJustMyCode: boolean = false;
     public defaultCellMarker: string = '';
     public themeMatplotlibPlots: boolean = false;
-    public variableQueries: IVariableQuery[] = [];
     public disableJupyterAutoStart: boolean = false;
     public enablePythonKernelLogging: boolean = false;
     public jupyterCommandLineArguments: string[] = [];
@@ -92,13 +86,11 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     public verboseLogging: boolean = false;
     public showVariableViewWhenDebugging: boolean = true;
     public newCellOnRunLast: boolean = true;
-    public pythonCompletionTriggerCharacters: string = '';
     public logKernelOutputSeparately: boolean = false;
     public development: boolean = false;
     public poetryPath: string = '';
     public excludeUserSitePackages: boolean = false;
-    public enableExtendedKernelCompletions: boolean = false;
-    public useOldKernelResolve: boolean = false;
+    public enableExtendedPythonKernelCompletions: boolean = false;
     public formatStackTraces: boolean = false;
     // Privates should start with _ so that they are not read from the settings.json
     private _changeEmitter = new EventEmitter<void>();
@@ -108,13 +100,12 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     constructor(
         workspaceFolder: Resource,
         private _systemVariablesCtor: ISystemVariablesConstructor, // Note: All properties not set with '_' are destroyed on update.
-        private _type: 'node' | 'web',
-        private readonly _workspace: IWorkspaceService
+        private _type: 'node' | 'web'
     ) {
         this._workspaceRoot = workspaceFolder;
         this.initialize();
         // Disable auto start in untrusted workspaces.
-        if (_workspace && _workspace.isTrusted === false) {
+        if (workspace.isTrusted === false) {
             this.disableJupyterAutoStart = true;
         }
     }
@@ -122,15 +113,14 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     public static getInstance(
         resource: Uri | undefined,
         systemVariablesCtor: ISystemVariablesConstructor,
-        type: 'node' | 'web',
-        workspace: IWorkspaceService
+        type: 'node' | 'web'
     ): JupyterSettings {
-        const workspaceFolderUri = JupyterSettings.getSettingsUriAndTarget(resource, workspace).uri;
+        const workspaceFolderUri = JupyterSettings.getSettingsUriAndTarget(resource).uri;
         const workspaceFolderKey = workspaceFolderUri ? workspaceFolderUri.path : '';
 
         let settings = JupyterSettings.jupyterSettings.get(workspaceFolderKey);
         if (!settings) {
-            settings = new JupyterSettings(workspaceFolderUri, systemVariablesCtor, type, workspace);
+            settings = new JupyterSettings(workspaceFolderUri, systemVariablesCtor, type);
             JupyterSettings.jupyterSettings.set(workspaceFolderKey, settings);
         } else if (settings._type === 'web' && type === 'node') {
             // Update to a node system variables if anybody every asks for a node one after
@@ -141,10 +131,10 @@ export class JupyterSettings implements IWatchableJupyterSettings {
         return settings;
     }
 
-    public static getSettingsUriAndTarget(
-        resource: Uri | undefined,
-        workspace: IWorkspaceService
-    ): { uri: Uri | undefined; target: ConfigurationTarget } {
+    public static getSettingsUriAndTarget(resource: Uri | undefined): {
+        uri: Uri | undefined;
+        target: ConfigurationTarget;
+    } {
         const workspaceFolder = resource ? workspace.getWorkspaceFolder(resource) : undefined;
         let workspaceFolderUri: Uri | undefined = workspaceFolder ? workspaceFolder.uri : undefined;
 
@@ -169,7 +159,7 @@ export class JupyterSettings implements IWatchableJupyterSettings {
     }
 
     public createSystemVariables(resource: Resource): ISystemVariables {
-        return new this._systemVariablesCtor(resource, this._workspaceRoot, this._workspace);
+        return new this._systemVariablesCtor(resource, this._workspaceRoot);
     }
 
     public toJSON() {
@@ -235,7 +225,7 @@ export class JupyterSettings implements IWatchableJupyterSettings {
 
     private onWorkspaceFoldersChanged() {
         //If an activated workspace folder was removed, delete its key
-        const workspaceKeys = this._workspace.workspaceFolders!.map((workspaceFolder) => workspaceFolder.uri.path);
+        const workspaceKeys = (workspace.workspaceFolders || []).map((workspaceFolder) => workspaceFolder.uri.path);
         const activatedWkspcKeys = Array.from(JupyterSettings.jupyterSettings.keys());
         const activatedWkspcFoldersRemoved = activatedWkspcKeys.filter((item) => workspaceKeys.indexOf(item) < 0);
         if (activatedWkspcFoldersRemoved.length > 0) {
@@ -247,17 +237,17 @@ export class JupyterSettings implements IWatchableJupyterSettings {
 
     private initialize(): void {
         const onDidChange = () => {
-            const currentConfig = this._workspace.getConfiguration('jupyter', this._workspaceRoot);
-            const pythonConfig = this._workspace.getConfiguration('python', this._workspaceRoot);
+            const currentConfig = workspace.getConfiguration('jupyter', this._workspaceRoot);
+            const pythonConfig = workspace.getConfiguration('python', this._workspaceRoot);
             this.update(currentConfig, pythonConfig);
 
             // If workspace config changes, then we could have a cascading effect of on change events.
             // Let's defer the change notification.
             this.debounceChangeNotification();
         };
-        this._disposables.push(this._workspace.onDidChangeWorkspaceFolders(this.onWorkspaceFoldersChanged, this));
+        this._disposables.push(workspace.onDidChangeWorkspaceFolders(this.onWorkspaceFoldersChanged, this));
         this._disposables.push(
-            this._workspace.onDidChangeConfiguration((event: ConfigurationChangeEvent) => {
+            workspace.onDidChangeConfiguration((event: ConfigurationChangeEvent) => {
                 if (event.affectsConfiguration('jupyter')) {
                     onDidChange();
                 }
@@ -267,8 +257,8 @@ export class JupyterSettings implements IWatchableJupyterSettings {
             })
         );
 
-        const initialConfig = this._workspace.getConfiguration('jupyter', this._workspaceRoot);
-        const pythonConfig = this._workspace.getConfiguration('python', this._workspaceRoot);
+        const initialConfig = workspace.getConfiguration('jupyter', this._workspaceRoot);
+        const pythonConfig = workspace.getConfiguration('python', this._workspaceRoot);
         if (initialConfig) {
             this.update(initialConfig, pythonConfig);
             this.migrateSettings(initialConfig).catch(noop);

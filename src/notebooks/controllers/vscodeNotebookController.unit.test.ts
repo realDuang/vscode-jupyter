@@ -12,14 +12,6 @@ import { VSCodeNotebookController } from './vscodeNotebookController';
 import { IKernel, IKernelProvider, KernelConnectionMetadata, LocalKernelConnectionMetadata } from '../../kernels/types';
 import { anything, instance, mock, verify, when } from 'ts-mockito';
 import {
-    IApplicationShell,
-    ICommandManager,
-    IDocumentManager,
-    IVSCodeNotebook,
-    IWorkspaceService
-} from '../../platform/common/application/types';
-import {
-    IBrowserService,
     IConfigurationService,
     IDisposable,
     IExtensionContext,
@@ -39,19 +31,15 @@ import { IInterpreterService } from '../../platform/interpreter/contracts';
 import { PythonEnvironment } from '../../platform/pythonEnvironments/info';
 import { IConnectionDisplayDataProvider } from './types';
 import { ConnectionDisplayDataProvider } from './connectionDisplayData.node';
+import { mockedVSCodeNamespaces, resetVSCodeMocks } from '../../test/vscode-mock';
+import { IJupyterVariables } from '../../kernels/variables/types';
 
 suite(`Notebook Controller`, function () {
     let controller: NotebookController;
     let kernelConnection: KernelConnectionMetadata;
-    let vscNotebookApi: IVSCodeNotebook;
-    let commandManager: ICommandManager;
     let context: IExtensionContext;
     let languageService: NotebookCellLanguageService;
-    let workspace: IWorkspaceService;
-    let documentManager: IDocumentManager;
     let configService: IConfigurationService;
-    let appShell: IApplicationShell;
-    let browser: IBrowserService;
     let serviceContainer: IServiceContainer;
     let providerRegistry: IJupyterServerProviderRegistry;
     let platform: IPlatformService;
@@ -70,17 +58,14 @@ suite(`Notebook Controller`, function () {
     let trustedPaths: ITrustedKernelPaths;
     let displayDataProvider: IConnectionDisplayDataProvider;
     let interpreterService: IInterpreterService;
+    let jupyterVariables: IJupyterVariables;
     setup(async function () {
+        resetVSCodeMocks();
+        disposables.push(new Disposable(() => resetVSCodeMocks()));
         kernelConnection = mock<KernelConnectionMetadata>();
-        vscNotebookApi = mock<IVSCodeNotebook>();
-        commandManager = mock<ICommandManager>();
         context = mock<IExtensionContext>();
         languageService = mock<NotebookCellLanguageService>();
-        workspace = mock<IWorkspaceService>();
-        documentManager = mock<IDocumentManager>();
         configService = mock<IConfigurationService>();
-        appShell = mock<IApplicationShell>();
-        browser = mock<IBrowserService>();
         serviceContainer = mock<IServiceContainer>();
         providerRegistry = mock<IJupyterServerProviderRegistry>();
         platform = mock<IPlatformService>();
@@ -88,6 +73,7 @@ suite(`Notebook Controller`, function () {
         extensionChecker = mock<IPythonExtensionChecker>();
         controller = mock<NotebookController>();
         kernel = mock<IKernel>();
+        jupyterVariables = mock<IJupyterVariables>();
         onDidChangeSelectedNotebooks = new EventEmitter<{
             readonly notebook: NotebookDocument;
             readonly selected: boolean;
@@ -105,10 +91,10 @@ suite(`Notebook Controller`, function () {
         disposables.push(new Disposable(() => clock.uninstall()));
         when(context.extensionUri).thenReturn(Uri.file('extension'));
         when(controller.onDidChangeSelectedNotebooks).thenReturn(onDidChangeSelectedNotebooks.event);
-        when(vscNotebookApi.onDidCloseNotebookDocument).thenReturn(onDidCloseNotebookDocument.event);
+        when(mockedVSCodeNamespaces.workspace.notebookDocuments).thenReturn([]);
+        when(mockedVSCodeNamespaces.workspace.onDidCloseNotebookDocument).thenReturn(onDidCloseNotebookDocument.event);
         when(
-            vscNotebookApi.createNotebookController(
-                anything(),
+            mockedVSCodeNamespaces.notebooks.createNotebookController(
                 anything(),
                 anything(),
                 anything(),
@@ -120,9 +106,10 @@ suite(`Notebook Controller`, function () {
             return instance(controller);
         });
         when(languageService.getSupportedLanguages(anything())).thenReturn([PYTHON_LANGUAGE]);
-        when(workspace.isTrusted).thenReturn(true);
-        when(vscNotebookApi.notebookEditors).thenReturn([]);
-        when(documentManager.applyEdit(anything())).thenResolve();
+        when(mockedVSCodeNamespaces.workspace.isTrusted).thenReturn(true);
+        when(mockedVSCodeNamespaces.workspace.onDidCloseNotebookDocument).thenReturn(onDidCloseNotebookDocument.event);
+        when(mockedVSCodeNamespaces.window.visibleNotebookEditors).thenReturn([]);
+        when(mockedVSCodeNamespaces.workspace.applyEdit(anything())).thenResolve();
         when(kernelProvider.getOrCreate(anything(), anything())).thenReturn(instance(kernel));
         when(configService.getSettings(anything())).thenReturn(instance(jupyterSettings));
         when((kernelConnection as LocalKernelConnectionMetadata).kernelSpec).thenReturn({
@@ -139,7 +126,6 @@ suite(`Notebook Controller`, function () {
         when(trustedPaths.isTrusted(anything())).thenReturn(true);
         when(jupyterSettings.disableJupyterAutoStart).thenReturn(false);
         displayDataProvider = new ConnectionDisplayDataProvider(
-            instance(workspace),
             instance(platform),
             instance(providerRegistry),
             disposables,
@@ -152,20 +138,15 @@ suite(`Notebook Controller`, function () {
             instance(kernelConnection),
             '1',
             viewType,
-            instance(vscNotebookApi),
-            instance(commandManager),
             instance(kernelProvider),
             instance(context),
             disposables,
             instance(languageService),
-            instance(workspace),
             instance(configService),
-            instance(documentManager),
-            instance(appShell),
-            instance(browser),
             instance(extensionChecker),
             instance(serviceContainer),
-            displayDataProvider
+            displayDataProvider,
+            jupyterVariables
         );
         notebook = new TestNotebookDocument(undefined, viewType);
     }
@@ -181,7 +162,7 @@ suite(`Notebook Controller`, function () {
     test('Kernel is not created upon selecting a controller if workspace is not trusted', async function () {
         createController('jupyter-notebook');
         when(kernelProvider.get(notebook)).thenReturn();
-        when(workspace.isTrusted).thenReturn(false);
+        when(mockedVSCodeNamespaces.workspace.isTrusted).thenReturn(false);
 
         onDidChangeSelectedNotebooks.fire({ notebook, selected: true });
         await clock.runAllAsync();
@@ -289,6 +270,6 @@ suite(`Notebook Controller`, function () {
         onDidChangeSelectedNotebooks.fire({ notebook, selected: true });
         await clock.runAllAsync();
 
-        verify(documentManager.applyEdit(anything())).once();
+        verify(mockedVSCodeNamespaces.workspace.applyEdit(anything())).once();
     });
 });

@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, multiInject, optional } from 'inversify';
-import { ICommandManager, IDocumentManager } from '../../platform/common/application/types';
 import { PYTHON_LANGUAGE } from '../../platform/common/constants';
 import { ContextKey } from '../../platform/common/contextKey';
 import {
@@ -16,6 +15,7 @@ import { EditorContexts } from '../../platform/common/constants';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
 import { IRawNotebookSupportedService } from '../../kernels/raw/types';
 import { hasCells } from '../../interactive-window/editor-integration/cellFactory';
+import { window } from 'vscode';
 
 /**
  * Singleton class that activate a bunch of random things that didn't fit anywhere else.
@@ -27,10 +27,8 @@ export class GlobalActivation implements IExtensionSyncActivationService {
     private changeHandler: IDisposable | undefined;
     private startTime: number = Date.now();
     constructor(
-        @inject(ICommandManager) private commandManager: ICommandManager,
         @inject(IDisposableRegistry) private disposableRegistry: IDisposableRegistry,
         @inject(IConfigurationService) private configuration: IConfigurationService,
-        @inject(IDocumentManager) private documentManager: IDocumentManager,
         @inject(IRawNotebookSupportedService)
         @optional()
         private rawSupported: IRawNotebookSupportedService | undefined,
@@ -49,16 +47,14 @@ export class GlobalActivation implements IExtensionSyncActivationService {
         this.disposableRegistry.push(this);
 
         // Listen for active editor changes so we can detect have code cells or not
-        this.disposableRegistry.push(
-            this.documentManager.onDidChangeActiveTextEditor(() => this.onChangedActiveTextEditor())
-        );
+        this.disposableRegistry.push(window.onDidChangeActiveTextEditor(() => this.onChangedActiveTextEditor()));
         this.onChangedActiveTextEditor();
 
         // Figure out the ZMQ available context key
         this.computeZmqAvailable();
 
         if (this.commandListeners) {
-            this.commandListeners.forEach((c) => c.register(this.commandManager));
+            this.commandListeners.forEach((c) => c.register());
         }
     }
 
@@ -72,19 +68,19 @@ export class GlobalActivation implements IExtensionSyncActivationService {
     private onSettingsChanged = () => {
         const settings = this.configuration.getSettings(undefined);
         const ownsSelection = settings.sendSelectionToInteractiveWindow;
-        const editorContext = new ContextKey(EditorContexts.OwnsSelection, this.commandManager);
+        const editorContext = new ContextKey(EditorContexts.OwnsSelection);
         editorContext.set(ownsSelection).catch(noop);
     };
 
     private computeZmqAvailable() {
-        const zmqContext = new ContextKey(EditorContexts.ZmqAvailable, this.commandManager);
+        const zmqContext = new ContextKey(EditorContexts.ZmqAvailable);
         zmqContext.set(this.rawSupported ? this.rawSupported.isSupported : false).then(noop, noop);
     }
 
     private onChangedActiveTextEditor() {
         // Setup the editor context for the cells
-        const editorContext = new ContextKey(EditorContexts.HasCodeCells, this.commandManager);
-        const activeEditor = this.documentManager.activeTextEditor;
+        const editorContext = new ContextKey(EditorContexts.HasCodeCells);
+        const activeEditor = window.activeTextEditor;
 
         if (activeEditor && activeEditor.document.languageId === PYTHON_LANGUAGE) {
             // Inform the editor context that we have cells, fire and forget is ok on the promise here

@@ -1,12 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import {
-    IApplicationShell,
-    IClipboard,
-    ICommandManager,
-    IEncryptedStorage
-} from '../../../platform/common/application/types';
+import { IEncryptedStorage } from '../../../platform/common/application/types';
 import { traceInfo } from '../../../platform/logging';
 import {
     IAsyncDisposableRegistry,
@@ -34,7 +29,17 @@ import {
 import { JupyterConnection } from '../../../kernels/jupyter/connection/jupyterConnection';
 import { dispose } from '../../../platform/common/utils/lifecycle';
 import { anything, instance, mock, when } from 'ts-mockito';
-import { CancellationTokenSource, Disposable, EventEmitter, InputBox, Memento, workspace } from 'vscode';
+import {
+    CancellationTokenSource,
+    Disposable,
+    EventEmitter,
+    InputBox,
+    Memento,
+    commands,
+    env,
+    window,
+    workspace
+} from 'vscode';
 import { noop } from '../../../platform/common/utils/misc';
 import { DataScience } from '../../../platform/common/utils/localize';
 import * as sinon from 'sinon';
@@ -125,13 +130,10 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
             jupyterLabWithHelloPasswordAndEmptyToken
         ]);
     });
-    let clipboard: IClipboard;
-    let appShell: IApplicationShell;
     let encryptedStorage: IEncryptedStorage;
     let memento: Memento;
     const disposables: IDisposable[] = [];
     let userUriProvider: UserJupyterServerUrlProvider;
-    let commands: ICommandManager;
     let inputBox: InputBox;
     let token: CancellationTokenSource;
     let requestCreator: IJupyterRequestCreator;
@@ -169,41 +171,34 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
             return new Disposable(noop);
         });
         sinon.stub(inputBox, 'onDidHide').callsFake(() => new Disposable(noop));
+        sinon.stub(commands, 'registerCommand').resolves();
         token = new CancellationTokenSource();
         disposables.push(new Disposable(() => token.cancel()));
         disposables.push(token);
-        clipboard = mock<IClipboard>();
-        appShell = api.serviceContainer.get<IApplicationShell>(IApplicationShell);
         encryptedStorage = mock<IEncryptedStorage>();
         memento = mock<Memento>();
-        commands = mock<ICommandManager>();
-        when(commands.registerCommand(anything(), anything())).thenReturn(new Disposable(noop));
         when(memento.get(anything())).thenReturn(undefined);
         when(memento.get(anything(), anything())).thenCall((_, defaultValue) => defaultValue);
         when(memento.update(anything(), anything())).thenResolve();
         when(encryptedStorage.retrieve(anything(), anything())).thenResolve();
         when(encryptedStorage.store(anything(), anything(), anything())).thenResolve();
-        sinon.stub(appShell, 'createInputBox').callsFake(() => inputBox);
+        sinon.stub(window, 'createInputBox').callsFake(() => inputBox);
         const serverUriStorage = mock<IJupyterServerUriStorage>();
-        when(serverUriStorage.getAll()).thenResolve([]);
+        when(serverUriStorage.all).thenReturn([]);
         const onDidRemoveUriStorage = new EventEmitter<JupyterServerProviderHandle[]>();
         disposables.push(onDidRemoveUriStorage);
         when(serverUriStorage.onDidRemove).thenReturn(onDidRemoveUriStorage.event);
         requestCreator = api.serviceContainer.get<IJupyterRequestCreator>(IJupyterRequestCreator);
 
         userUriProvider = new UserJupyterServerUrlProvider(
-            instance(clipboard),
-            appShell,
             api.serviceContainer.get<IConfigurationService>(IConfigurationService),
             api.serviceContainer.get<JupyterConnection>(JupyterConnection),
-            false,
             instance(encryptedStorage),
             instance(serverUriStorage),
             instance(memento),
             disposables,
             api.serviceContainer.get<IMultiStepInputFactory>(IMultiStepInputFactory),
             api.serviceContainer.get<IAsyncDisposableRegistry>(IAsyncDisposableRegistry),
-            instance(commands),
             api.serviceContainer.get<IJupyterRequestAgentCreator>(IJupyterRequestAgentCreator),
             api.serviceContainer.get<IJupyterRequestCreator>(IJupyterRequestCreator),
             api.serviceContainer.get<IExtensionContext>(IExtensionContext),
@@ -234,21 +229,23 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
         failWithInvalidPassword?: boolean;
     }) {
         const config = workspace.getConfiguration('jupyter');
-        await config.update('allowUnauthorizedRemoteConnection', false);
-        const prompt = await hijackPrompt(
-            'showErrorMessage',
-            { contains: 'certificate' },
-            { result: DataScience.jupyterSelfCertEnable, clickImmediately: true }
-        );
-        disposables.push(prompt);
         const displayName = 'Test Remove Server Name';
-        when(clipboard.readText()).thenResolve(userUri);
+        void env.clipboard.writeText(userUri);
         sinon.stub(UserJupyterServerUriInput.prototype, 'getUrlFromUser').resolves({
             url: userUri,
             jupyterServerUri: parseUri(userUri, '')!
         });
         const baseUrl = `${new URL(userUri).protocol}//localhost:${new URL(userUri).port}/`;
-        const computedBaseUrl = await getBaseJupyterUrl(userUri, requestCreator);
+        const [prompt, computedBaseUrl] = await Promise.all([
+            hijackPrompt(
+                'showErrorMessage',
+                { contains: 'certificate' },
+                { result: DataScience.jupyterSelfCertEnable, clickImmediately: true }
+            ),
+            getBaseJupyterUrl(userUri, requestCreator),
+            config.update('allowUnauthorizedRemoteConnection', false)
+        ]);
+        disposables.push(prompt);
         assert.strictEqual(computedBaseUrl?.endsWith('/') ? computedBaseUrl : `${computedBaseUrl}/`, baseUrl);
         sinon.stub(SecureConnectionValidator.prototype, 'promptToUseInsecureConnections').resolves(true);
         sinon.stub(UserJupyterServerDisplayName.prototype, 'getDisplayName').resolves(displayName);

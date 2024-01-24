@@ -1,22 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { instance, mock, when } from 'ts-mockito';
+import { anything, when } from 'ts-mockito';
 import * as TypeMoq from 'typemoq';
 import { CancellationTokenSource, Disposable, EventEmitter, TextDocument, Uri } from 'vscode';
 
-import {
-    ICommandManager,
-    IDebugService,
-    IDocumentManager,
-    IVSCodeNotebook,
-    IWorkspaceService
-} from '../../platform/common/application/types';
+import { IDebugService } from '../../platform/common/application/types';
 import { IConfigurationService, IWatchableJupyterSettings } from '../../platform/common/types';
 import { DataScienceCodeLensProvider } from '../../interactive-window/editor-integration/codelensprovider';
 import { IServiceContainer } from '../../platform/ioc/types';
 import { ICodeWatcher, IDataScienceCodeLensProvider } from '../../interactive-window/editor-integration/types';
 import { IDebugLocationTracker } from '../../notebooks/debugger/debuggingTypes';
+import { mockedVSCodeNamespaces } from '../../test/vscode-mock';
 
 // eslint-disable-next-line
 suite('DataScienceCodeLensProvider Unit Tests', () => {
@@ -24,42 +19,30 @@ suite('DataScienceCodeLensProvider Unit Tests', () => {
     let configurationService: TypeMoq.IMock<IConfigurationService>;
     let codeLensProvider: IDataScienceCodeLensProvider;
     let pythonSettings: TypeMoq.IMock<IWatchableJupyterSettings>;
-    let documentManager: TypeMoq.IMock<IDocumentManager>;
-    let commandManager: TypeMoq.IMock<ICommandManager>;
     let debugService: TypeMoq.IMock<IDebugService>;
     let debugLocationTracker: TypeMoq.IMock<IDebugLocationTracker>;
     let tokenSource: CancellationTokenSource;
-    let vscodeNotebook: TypeMoq.IMock<IVSCodeNotebook>;
     const disposables: Disposable[] = [];
 
     setup(() => {
         tokenSource = new CancellationTokenSource();
         serviceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
         configurationService = TypeMoq.Mock.ofType<IConfigurationService>();
-        documentManager = TypeMoq.Mock.ofType<IDocumentManager>();
-        commandManager = TypeMoq.Mock.ofType<ICommandManager>();
         debugService = TypeMoq.Mock.ofType<IDebugService>();
         debugLocationTracker = TypeMoq.Mock.ofType<IDebugLocationTracker>();
         pythonSettings = TypeMoq.Mock.ofType<IWatchableJupyterSettings>();
-        vscodeNotebook = TypeMoq.Mock.ofType<IVSCodeNotebook>();
-        const workspace = mock<IWorkspaceService>();
-        when(workspace.isTrusted).thenReturn(true);
-        when(workspace.onDidGrantWorkspaceTrust).thenReturn(new EventEmitter<void>().event);
+        when(mockedVSCodeNamespaces.workspace.isTrusted).thenReturn(true);
+        when(mockedVSCodeNamespaces.workspace.onDidGrantWorkspaceTrust).thenReturn(new EventEmitter<void>().event);
+        when(mockedVSCodeNamespaces.window.activeNotebookEditor).thenReturn(undefined);
         configurationService.setup((c) => c.getSettings(TypeMoq.It.isAny())).returns(() => pythonSettings.object);
-        vscodeNotebook.setup((c) => c.activeNotebookEditor).returns(() => undefined);
-        commandManager
-            .setup((c) => c.executeCommand(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
-            .returns(() => Promise.resolve());
+        when(mockedVSCodeNamespaces.commands.executeCommand(anything(), anything(), anything())).thenResolve();
         debugService.setup((d) => d.activeDebugSession).returns(() => undefined);
         codeLensProvider = new DataScienceCodeLensProvider(
             serviceContainer.object,
             debugLocationTracker.object,
-            documentManager.object,
             configurationService.object,
-            commandManager.object,
             disposables,
-            debugService.object,
-            instance(workspace)
+            debugService.object
         );
     });
 
@@ -80,7 +63,7 @@ suite('DataScienceCodeLensProvider Unit Tests', () => {
             .setup((c) => c.get(TypeMoq.It.isValue(ICodeWatcher)))
             .returns(() => targetCodeWatcher.object)
             .verifiable(TypeMoq.Times.once());
-        documentManager.setup((d) => d.textDocuments).returns(() => [document.object]);
+        when(mockedVSCodeNamespaces.workspace.textDocuments).thenReturn([document.object]);
 
         await codeLensProvider.provideCodeLenses(document.object, tokenSource.token);
 
@@ -109,7 +92,7 @@ suite('DataScienceCodeLensProvider Unit Tests', () => {
                 return targetCodeWatcher.object;
             })
             .verifiable(TypeMoq.Times.once());
-        documentManager.setup((d) => d.textDocuments).returns(() => [document.object]);
+        when(mockedVSCodeNamespaces.workspace.textDocuments).thenReturn([document.object]);
 
         await codeLensProvider.provideCodeLenses(document.object, tokenSource.token);
         await codeLensProvider.provideCodeLenses(document.object, tokenSource.token);
@@ -149,7 +132,7 @@ suite('DataScienceCodeLensProvider Unit Tests', () => {
         serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(ICodeWatcher))).returns(() => targetCodeWatcher1.object);
         serviceContainer.setup((c) => c.get(TypeMoq.It.isValue(ICodeWatcher))).returns(() => targetCodeWatcher2.object);
 
-        documentManager.setup((d) => d.textDocuments).returns(() => [document1.object, document2.object]);
+        when(mockedVSCodeNamespaces.workspace.textDocuments).thenReturn([document1.object, document2.object]);
 
         await codeLensProvider.provideCodeLenses(document1.object, tokenSource.token);
         await codeLensProvider.provideCodeLenses(document1.object, tokenSource.token);

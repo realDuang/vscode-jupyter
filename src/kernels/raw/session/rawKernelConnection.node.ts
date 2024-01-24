@@ -19,7 +19,7 @@ import { IKernelSocket, LocalKernelConnectionMetadata } from '../../types';
 import { suppressShutdownErrors } from '../../common/baseJupyterSession';
 import { Signal } from '@lumino/signaling';
 import type { IIOPubMessage, IMessage, IOPubMessageType, MessageType } from '@jupyterlab/services/lib/kernel/messages';
-import { CancellationError, CancellationToken, CancellationTokenSource, Uri } from 'vscode';
+import { CancellationError, CancellationToken, CancellationTokenSource, Uri, workspace } from 'vscode';
 import { KernelProgressReporter } from '../../../platform/progress/kernelProgressReporter';
 import { DataScience } from '../../../platform/common/utils/localize';
 import { sendKernelTelemetryEvent } from '../../telemetry/sendKernelTelemetryEvent';
@@ -473,7 +473,7 @@ async function postStartKernel(
 
     // Attempt to get kernel to respond to requests (this is what jupyter does today).
     // Kinda warms up the kernel communication & ensure things are in the right state.
-    traceVerbose(`Kernel status before requesting kernel info and after ready is ${kernel?.status}`);
+    traceVerbose(`Kernel status is '${kernel?.status}' before requesting kernel info and after ready`);
     // Lets wait for the response (max of 3s), like jupyter (python code) & jupyter client (jupyter lab npm) does.
     // Lets not wait for full timeout, we don't want to slow kernel startup.
     // Note: in node_modules/@jupyterlab/services/lib/kernel/default.js we only wait for 3s.
@@ -483,25 +483,56 @@ async function postStartKernel(
     // Lets try this and see (hence the telemetry to see the cost of this check).
     // We know 10s is way too slow, see https://github.com/microsoft/vscode-jupyter/issues/8917
     const gotIoPubMessage = createDeferred<boolean>();
+    const kernelInfoRequestHandled = createDeferred<boolean>();
     const iopubHandler = () => gotIoPubMessage.resolve(true);
     kernel.iopubMessage.connect(iopubHandler);
+    const sendKernelInfoRequestOnControlChannel = () => {
+        const jupyterLab = require('@jupyterlab/services') as typeof import('@jupyterlab/services');
+        const msg = jupyterLab.KernelMessage.createMessage({
+            msgType: 'kernel_info_request',
+            // Cast to Shell, js code only allows sending kernel info request on shell channel
+            // However the Python code sends on both shell and control channels.
+            // And when a response is received on either channel, then thats considered a success.
+            channel: 'control' as unknown as 'shell',
+            username: kernel.username,
+            session: kernel.clientId,
+            content: {}
+        });
+        kernel
+            .sendControlMessage(msg as any, true, true)
+            .done.then(() => kernelInfoRequestHandled.resolve(true))
+            .catch(noop);
+    };
+    const sendKernelInfoRequestOnShellChannel = () => {
+        kernel
+            .requestKernelInfo()
+            .then(() => kernelInfoRequestHandled.resolve(true))
+            .catch(noop);
+    };
     try {
         const stopWatch = new StopWatch();
-        let attempts = 1;
-        for (let attempts = 1; attempts <= 2; attempts++) {
+        let attempts = 0;
+        while (stopWatch.elapsedTime < launchTimeout * 1000) {
+            attempts += 1;
             try {
                 traceVerbose('Sending request for kernelInfo');
+                // In jupyter_server/services/kernels/connection/channels.py,
+                // the request for kernel information is sent on both channels
+                // To ensure max compatibility, we'll do the same.
+                sendKernelInfoRequestOnControlChannel();
+                sendKernelInfoRequestOnShellChannel();
                 await raceCancellationError(
                     token,
-                    Promise.all([kernel.requestKernelInfo(), gotIoPubMessage.promise]),
-                    sleep(Math.min(launchTimeout, 1_500)).then(noop)
+                    Promise.all([gotIoPubMessage.promise, kernelInfoRequestHandled.promise]),
+                    // Jupyter lab too waits for 500ms before trying again.
+                    sleep(Math.min(launchTimeout, 500)).then(noop)
                 );
             } catch (ex) {
                 traceError('Failed to request kernel info', ex);
                 throw ex;
             }
 
-            if (gotIoPubMessage.completed) {
+            if (gotIoPubMessage.completed && kernelInfoRequestHandled.completed) {
                 traceVerbose(`Got response for requestKernelInfo`);
                 break;
             } else {
@@ -509,17 +540,21 @@ async function postStartKernel(
                 continue;
             }
         }
-        if (gotIoPubMessage.completed) {
-            traceVerbose('Successfully completed postStartRawSession');
+        if (gotIoPubMessage.completed && kernelInfoRequestHandled.completed) {
+            traceVerbose(
+                `Successfully completed postStartRawSession after ${attempts} attempt(s) in ${stopWatch.elapsedTime}ms`
+            );
         } else {
-            traceWarning(`Didn't get response for requestKernelInfo after ${stopWatch.elapsedTime}ms.`);
+            traceWarning(
+                `Didn't get response for requestKernelInfo after ${attempts} attempt(s) in ${stopWatch.elapsedTime}ms.`
+            );
         }
         sendKernelTelemetryEvent(
             resource,
             Telemetry.RawKernelInfoResponse,
             { duration: stopWatch.elapsedTime, attempts },
             {
-                timedout: !gotIoPubMessage.completed
+                timedout: !gotIoPubMessage.completed || !kernelInfoRequestHandled.completed
             }
         );
     } finally {
@@ -597,6 +632,11 @@ function newRawKernel(kernelProcess: IKernelProcess, clientId: string, username:
         username,
         model
     });
+    if (workspace.getConfiguration('jupyter').get('enablePythonKernelLogging', false)) {
+        realKernel.anyMessage.connect((_, msg) => {
+            traceVerbose(`[AnyMessage Event] [${msg.direction}] [${kernelProcess.pid}] ${JSON.stringify(msg.msg)}`);
+        });
+    }
 
     KernelSocketMap.set(realKernel.id, socketInstance!);
     socketInstance!.emit('open');
@@ -612,7 +652,7 @@ async function waitForReady(
     kernelConnectionMetadata: LocalKernelConnectionMetadata,
     launchTimeout: number
 ): Promise<void> {
-    traceVerbose(`Waiting for Raw session to be ready, currently ${kernel.connectionStatus}`);
+    traceVerbose(`Waiting for Raw session to be ready, status: ${kernel.connectionStatus}`);
     // When our kernel connects and gets a status message it triggers the ready promise
     const deferred = createDeferred<'connected'>();
     const handler = (_: unknown, status: Kernel.ConnectionStatus) => {
@@ -629,10 +669,10 @@ async function waitForReady(
         deferred.resolve(kernel.connectionStatus);
     }
 
-    traceVerbose('Waiting for Raw session to be ready for 30s');
+    traceVerbose('Waiting for Raw session to be ready');
     const result = await raceTimeout(launchTimeout, deferred.promise);
     kernel.connectionStatusChanged.disconnect(handler);
-    traceVerbose(`Waited for Raw session to be ready & got ${result}`);
+    traceVerbose(`Waited for Raw session to be ready & got status: ${result}`);
 
     if (result !== 'connected') {
         throw new KernelConnectionTimeoutError(kernelConnectionMetadata);

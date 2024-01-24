@@ -12,9 +12,11 @@ import {
     CancellationTokenSource,
     CompletionContext,
     CompletionItem,
+    CompletionItemProvider,
     CompletionTriggerKind,
     DebugSession,
     Diagnostic,
+    Disposable,
     Event,
     EventEmitter,
     Hover,
@@ -70,19 +72,18 @@ import { VSCodeNotebookController } from '../../../notebooks/controllers/vscodeN
 import { IDebuggingManager, IKernelDebugAdapter } from '../../../notebooks/debugger/debuggingTypes';
 import { LastSavedNotebookCellLanguage } from '../../../notebooks/languages/cellLanguageService';
 import { INotebookEditorProvider } from '../../../notebooks/types';
-import { VSCodeNotebook } from '../../../platform/common/application/notebook';
-import { IApplicationShell, IVSCodeNotebook, IWorkspaceService } from '../../../platform/common/application/types';
 import {
     JVSC_EXTENSION_ID,
     JupyterNotebookView,
     MARKDOWN_LANGUAGE,
     PYTHON_LANGUAGE,
-    defaultNotebookFormat
+    defaultNotebookFormat,
+    isWebExtension
 } from '../../../platform/common/constants';
 import { dispose } from '../../../platform/common/utils/lifecycle';
 import { getDisplayPath } from '../../../platform/common/platform/fs-paths';
 import { IFileSystem, IPlatformService } from '../../../platform/common/platform/types';
-import { GLOBAL_MEMENTO, IDisposable, IMemento, IsWebExtension } from '../../../platform/common/types';
+import { GLOBAL_MEMENTO, IDisposable, IMemento } from '../../../platform/common/types';
 import { createDeferred, sleep } from '../../../platform/common/utils/async';
 import { DataScience } from '../../../platform/common/utils/localize';
 import { isWeb } from '../../../platform/common/utils/misc';
@@ -91,7 +92,6 @@ import { IInterpreterService } from '../../../platform/interpreter/contracts';
 import { traceInfo, traceInfoIfCI, traceVerbose, traceWarning } from '../../../platform/logging';
 import { areInterpreterPathsSame } from '../../../platform/pythonEnvironments/info/interpreter';
 import * as urlPath from '../../../platform/vscode-path/resources';
-import { PythonKernelCompletionProvider } from '../../../standalone/intellisense/pythonKernelCompletionProvider';
 import { initialize, waitForCondition } from '../../common';
 import { IS_REMOTE_NATIVE_TEST, IS_SMOKE_TEST } from '../../constants';
 import { noop } from '../../core';
@@ -100,6 +100,7 @@ import { verifySelectedControllerIsRemoteForRemoteTests } from '../helpers';
 import { ControllerPreferredService } from './controllerPreferredService';
 import { JupyterConnection } from '../../../kernels/jupyter/connection/jupyterConnection';
 import { JupyterLabHelper } from '../../../kernels/jupyter/session/jupyterLabHelper';
+import { getRootFolder } from '../../../platform/common/application/workspace.base';
 
 // Running in Conda environments, things can be a little slower.
 export const defaultNotebookTestTimeout = 60_000;
@@ -107,7 +108,6 @@ export const defaultNotebookTestTimeout = 60_000;
 export async function getServices() {
     const api = await initialize();
     return {
-        vscodeNotebook: api.serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook) as IVSCodeNotebook,
         editorProvider: api.serviceContainer.get<INotebookEditorProvider>(
             INotebookEditorProvider
         ) as INotebookEditorProvider,
@@ -115,8 +115,7 @@ export async function getServices() {
             IControllerRegistration
         ) as IControllerRegistration,
         controllerPreferred: ControllerPreferredService.create(api.serviceContainer),
-        isWebExtension: api.serviceContainer.get<boolean>(IsWebExtension),
-        interpreterService: api.serviceContainer.get<boolean>(IsWebExtension)
+        interpreterService: isWebExtension()
             ? undefined
             : api.serviceContainer.get<IInterpreterService>(IInterpreterService),
         kernelFinder: api.serviceContainer.get<IKernelFinder>(IKernelFinder),
@@ -131,8 +130,8 @@ export async function selectCell(notebook: NotebookDocument, start: number, end:
 }
 
 export async function insertMarkdownCell(source: string, options?: { index?: number }) {
-    const { vscodeNotebook } = await getServices();
-    const activeEditor = vscodeNotebook.activeNotebookEditor;
+    await getServices();
+    const activeEditor = window.activeNotebookEditor;
     if (!activeEditor) {
         throw new Error('No active editor');
     }
@@ -147,8 +146,7 @@ export async function insertMarkdownCell(source: string, options?: { index?: num
     return activeEditor.notebook.cellAt(startNumber)!;
 }
 export async function insertCodeCell(source: string, options?: { language?: string; index?: number }) {
-    const { vscodeNotebook } = await getServices();
-    const activeEditor = vscodeNotebook.activeNotebookEditor;
+    const activeEditor = window.activeNotebookEditor;
     if (!activeEditor) {
         throw new Error('No active editor');
     }
@@ -164,8 +162,7 @@ export async function insertCodeCell(source: string, options?: { language?: stri
     return activeEditor.notebook.cellAt(startNumber)!;
 }
 export async function deleteCell(index: number = 0) {
-    const { vscodeNotebook } = await getServices();
-    const activeEditor = vscodeNotebook.activeNotebookEditor;
+    const activeEditor = window.activeNotebookEditor;
     if (!activeEditor || activeEditor.notebook.cellCount === 0) {
         return;
     }
@@ -178,8 +175,7 @@ export async function deleteCell(index: number = 0) {
     });
 }
 export async function deleteAllCellsAndWait() {
-    const { vscodeNotebook } = await getServices();
-    const activeEditor = vscodeNotebook.activeNotebookEditor;
+    const activeEditor = window.activeNotebookEditor;
     if (!activeEditor || activeEditor.notebook.cellCount === 0) {
         return;
     }
@@ -209,12 +205,8 @@ export async function generateTemporaryFilePath(
 ) {
     const services = await getServices();
     const platformService = services.serviceContainer.get<IPlatformService>(IPlatformService);
-    const workspaceService = services.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
     const rootUrl =
-        rootFolder ||
-        platformService.tempDir ||
-        workspaceService.rootFolder ||
-        Uri.file('./').with({ scheme: 'vscode-test-web' });
+        rootFolder || platformService.tempDir || getRootFolder() || Uri.file('./').with({ scheme: 'vscode-test-web' });
 
     const uri = urlPath.joinPath(rootUrl, `${prefix || ''}${uuid()}.${extension}`);
     disposables.push({
@@ -291,8 +283,7 @@ export async function createEmptyPythonNotebook(
     dontWaitForKernel?: boolean
 ) {
     traceInfoIfCI('Creating an empty notebook');
-    const { serviceContainer } = await getServices();
-    const vscodeNotebook = serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
+    await getServices();
     // Don't use same file (due to dirty handling, we might save in dirty.)
     // Coz we won't save to file, hence extension will backup in dirty file and when u re-open it will open from dirty.
     const nbFile = await createTemporaryNotebook(
@@ -305,15 +296,15 @@ export async function createEmptyPythonNotebook(
     );
     // Open a python notebook and use this for all tests in this test suite.
     await openAndShowNotebook(nbFile);
-    assert.isOk(vscodeNotebook.activeNotebookEditor, 'No active notebook');
+    assert.isOk(window.activeNotebookEditor, 'No active notebook');
     if (!dontWaitForKernel) {
-        await waitForKernelToGetAutoSelected(vscodeNotebook.activeNotebookEditor!, PYTHON_LANGUAGE);
+        await waitForKernelToGetAutoSelected(window.activeNotebookEditor!, PYTHON_LANGUAGE);
         await verifySelectedControllerIsRemoteForRemoteTests();
     }
     await deleteAllCellsAndWait();
-    const notebook = vscodeNotebook.activeNotebookEditor!.notebook;
+    const notebook = window.activeNotebookEditor!.notebook;
     traceVerbose(`Empty notebook created ${getDisplayPath(notebook.uri)}`);
-    return { notebook, editor: vscodeNotebook.activeNotebookEditor! };
+    return { notebook, editor: window.activeNotebookEditor! };
 }
 
 async function shutdownAllNotebooks() {
@@ -340,7 +331,7 @@ async function shutdownRemoteKernels() {
     const cancelToken = new CancellationTokenSource();
     let sessionManager: JupyterLabHelper | undefined;
     try {
-        const connection = await jupyterConnection.createConnectionInfo((await serverUriStorage.getAll())[0].provider);
+        const connection = await jupyterConnection.createConnectionInfo(serverUriStorage.all[0].provider);
         sessionManager = JupyterLabHelper.create(connection.settings);
         const liveKernels = await sessionManager.getRunningKernels();
         await Promise.all(
@@ -395,10 +386,20 @@ export async function closeNotebooks(disposables: IDisposable[] = []) {
             .map((item) => getDisplayPath(item.uri))
             .join(', ')}`
     );
-    const api = await initialize();
+    await initialize();
     VSCodeNotebookController.kernelAssociatedWithDocument = undefined;
-    const notebooks = api.serviceManager.get<IVSCodeNotebook>(IVSCodeNotebook) as VSCodeNotebook;
-    await notebooks.closeActiveNotebooks();
+    // We could have untitled notebooks, close them by reverting changes.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const documents = new Set<NotebookDocument>(workspace.notebookDocuments);
+    while (window.activeNotebookEditor) {
+        documents.add(window.activeNotebookEditor.notebook);
+        await commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+        await sleep(10);
+    }
+
+    // That command does not cause notebook on close to fire. Fire this for every active editor
+    // documents.forEach((d) => this._onDidCloseNotebookDocument.fire(d));
+
     await closeActiveWindows();
     dispose(disposables);
     await shutdownAllNotebooks();
@@ -541,17 +542,11 @@ async function waitForKernelToChangeImpl(
 }
 
 async function waitForActiveNotebookEditor(notebookEditor?: NotebookEditor): Promise<NotebookEditor> {
-    const { vscodeNotebook } = await getServices();
-
     // Wait for the active editor to come up
-    notebookEditor = notebookEditor || vscodeNotebook.activeNotebookEditor;
+    notebookEditor = notebookEditor || window.activeNotebookEditor;
     if (!notebookEditor) {
-        await waitForCondition(
-            async () => !!vscodeNotebook.activeNotebookEditor,
-            10_000,
-            'Active editor not a notebook'
-        );
-        notebookEditor = vscodeNotebook.activeNotebookEditor;
+        await waitForCondition(async () => !!window.activeNotebookEditor, 10_000, 'Active editor not a notebook');
+        notebookEditor = window.activeNotebookEditor;
     }
     if (!notebookEditor) {
         throw new Error('No notebook editor');
@@ -738,8 +733,8 @@ export async function waitForKernelToGetAutoSelectedImpl(
     skipAutoSelection: boolean = false
 ) {
     traceInfoIfCI('Wait for kernel to get auto selected');
-    const { controllerRegistration, controllerPreferred, interpreterService, isWebExtension } = await getServices();
-    const useRemoteKernelSpec = IS_REMOTE_NATIVE_TEST() || isWebExtension; // Web is only remote
+    const { controllerRegistration, controllerPreferred, interpreterService } = await getServices();
+    const useRemoteKernelSpec = IS_REMOTE_NATIVE_TEST() || isWebExtension(); // Web is only remote
 
     // Wait for the active editor to come up
     notebookEditor = await waitForActiveNotebookEditor(notebookEditor);
@@ -839,7 +834,7 @@ export async function prewarmNotebooks() {
     if (prewarmNotebooksDone.done) {
         return;
     }
-    const { vscodeNotebook, serviceContainer } = await getServices();
+    const { serviceContainer } = await getServices();
     await closeActiveWindows();
 
     const disposables: IDisposable[] = [];
@@ -852,7 +847,7 @@ export async function prewarmNotebooks() {
         const notebookEditor = await createNewNotebook();
         await insertCodeCell('print("Hello World1")', { index: 0 });
         await selectDefaultController(notebookEditor, defaultNotebookTestTimeout);
-        const cell = vscodeNotebook.activeNotebookEditor!.notebook.cellAt(0)!;
+        const cell = window.activeNotebookEditor!.notebook.cellAt(0)!;
         traceInfoIfCI(`Running all cells in prewarm notebooks`);
         await Promise.all([waitForExecutionCompletedSuccessfully(cell, 60_000), runAllCellsInActiveNotebook()]);
         await closeActiveWindows();
@@ -968,7 +963,7 @@ export async function waitForExecutionCompletedSuccessfully(
 }
 
 export async function waitForCompletions(
-    completionProvider: PythonKernelCompletionProvider,
+    completionProvider: CompletionItemProvider,
     cell: NotebookCell,
     pos: Position,
     triggerCharacter: string | undefined
@@ -982,7 +977,12 @@ export async function waitForCompletions(
                 triggerKind: triggerCharacter ? CompletionTriggerKind.TriggerCharacter : CompletionTriggerKind.Invoke,
                 triggerCharacter
             };
-            completions = await completionProvider.provideCompletionItems(cell.document, pos, token, context);
+            const result = await Promise.resolve(
+                completionProvider.provideCompletionItems(cell.document, pos, token, context)
+            );
+            if (result) {
+                completions = Array.isArray(result) ? result : result.items;
+            }
             return completions.length > 0;
         },
         defaultNotebookTestTimeout,
@@ -1237,18 +1237,17 @@ export async function saveActiveNotebook() {
     await commands.executeCommand('workbench.action.files.saveAll');
 }
 export async function runCell(cell: NotebookCell, waitForExecutionToComplete = false, language = PYTHON_LANGUAGE) {
-    const api = await initialize();
-    const vscodeNotebook = api.serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
-    const notebookEditor = vscodeNotebook.notebookEditors.find((e) => e.notebook === cell.notebook);
+    await initialize();
+    const notebookEditor = window.visibleNotebookEditors.find((e) => e.notebook === cell.notebook);
     await waitForKernelToGetAutoSelected(notebookEditor!, language, 60_000);
-    if (!vscodeNotebook.activeNotebookEditor || !vscodeNotebook.activeNotebookEditor.notebook) {
+    if (!window.activeNotebookEditor || !window.activeNotebookEditor.notebook) {
         throw new Error('No notebook or document');
     }
 
     const promise = commands.executeCommand(
         'notebook.cell.execute',
         { start: cell.index, end: cell.index + 1 },
-        vscodeNotebook.activeNotebookEditor.notebook.uri
+        window.activeNotebookEditor.notebook.uri
     );
 
     if (waitForExecutionToComplete) {
@@ -1260,16 +1259,15 @@ export async function runAllCellsInActiveNotebook(
     activeEditor: NotebookEditor | undefined = undefined,
     language: string = PYTHON_LANGUAGE
 ) {
-    const api = await initialize();
-    const vscodeNotebook = api.serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
+    await initialize();
     await waitForKernelToGetAutoSelected(activeEditor!, language, 60_000);
 
-    if (!vscodeNotebook.activeNotebookEditor || !vscodeNotebook.activeNotebookEditor.notebook) {
+    if (!window.activeNotebookEditor || !window.activeNotebookEditor.notebook) {
         throw new Error('No editor or document');
     }
 
     const promise = commands
-        .executeCommand('notebook.execute', vscodeNotebook.activeNotebookEditor.notebook.uri)
+        .executeCommand('notebook.execute', window.activeNotebookEditor.notebook.uri)
         .then(noop, noop);
 
     if (waitForExecutionToComplete) {
@@ -1303,14 +1301,13 @@ export async function hijackPrompt(
     buttonToClick?: WindowPromptStubButtonClickOptions,
     disposables: IDisposable[] = []
 ): Promise<WindowPromptStub> {
-    const api = await initialize();
-    const appShell = api.serviceContainer.get<IApplicationShell>(IApplicationShell);
+    await initialize();
     let displayed = createDeferred<boolean>();
     let clickButton = createDeferred<string | Uri>();
     const messageDisplayed: string[] = [];
     let displayCount = 0;
     // eslint-disable-next-line
-    const stub = sinon.stub(appShell, promptType).callsFake(function (msg: string) {
+    const stub = sinon.stub(window, promptType).callsFake(function (msg: string) {
         traceInfo(`Message displayed to user '${msg}', condition ${JSON.stringify(message)}`);
         if (
             ('exactMatch' in message && msg.trim() === message.exactMatch.trim()) ||
@@ -1332,7 +1329,7 @@ export async function hijackPrompt(
             }
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (appShell[promptType] as any).wrappedMethod.apply(appShell, arguments);
+        return (window[promptType] as any).wrappedMethod.apply(window, arguments);
     } as any);
     const disposable = { dispose: () => stub.restore() };
     if (disposables) {
@@ -1361,14 +1358,12 @@ export async function hijackSavePrompt(
     buttonToClick?: WindowPromptStubButtonClickOptions,
     disposables: IDisposable[] = []
 ): Promise<WindowPromptStub> {
-    const api = await initialize();
-    const appShell = api.serviceContainer.get<IApplicationShell>(IApplicationShell);
+    await initialize();
     let displayed = createDeferred<boolean>();
     let clickButton = createDeferred<string | Uri>();
     const messageDisplayed: string[] = [];
     let displayCount = 0;
-    // eslint-disable-next-line
-    const stub = sinon.stub(appShell, 'showSaveDialog').callsFake(function (msg: { saveLabel: string }) {
+    const showSaveDialogFake = (msg: { saveLabel: string }) => {
         traceInfo(`Message displayed to user '${JSON.stringify(msg)}', checking for '${saveLabel}'`);
         if (msg.saveLabel === saveLabel) {
             messageDisplayed.push(msg.saveLabel);
@@ -1386,14 +1381,16 @@ export async function hijackSavePrompt(
             }
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (appShell.showSaveDialog as any).wrappedMethod.apply(appShell, arguments);
-    } as any);
-    const disposable = { dispose: () => stub.restore() };
+        return (window.showSaveDialog as any).wrappedMethod.apply(window, arguments);
+    };
+    // eslint-disable-next-line
+    const stub1 = sinon.stub(window, 'showSaveDialog').callsFake(showSaveDialogFake as any);
+    const disposable = new Disposable(() => stub1.restore());
     if (disposables) {
         disposables.push(disposable);
     }
     return {
-        dispose: () => stub.restore(),
+        dispose: () => disposable.dispose(),
         getDisplayCount: () => displayCount,
         get displayed() {
             return displayed.promise;
@@ -1484,11 +1481,10 @@ export type QuickPickStub = {
 };
 
 export async function hijackCreateQuickPick(disposables: IDisposable[] = []): Promise<QuickPickStub> {
-    const api = await initialize();
-    const appShell = api.serviceContainer.get<IApplicationShell>(IApplicationShell);
+    await initialize();
     const emitter = new EventEmitter<MockQuickPick>();
 
-    const stub = sinon.stub(appShell, 'createQuickPick').callsFake(function () {
+    const stub = sinon.stub(window, 'createQuickPick').callsFake(function () {
         const result = new MockQuickPick();
         emitter.fire(result);
         return result;
@@ -1568,17 +1564,16 @@ export async function getDebugSessionAndAdapter(
 }
 
 export async function clickOKForRestartPrompt() {
-    const api = await initialize();
+    await initialize();
     // Ensure we click `Yes` when prompted to restart the kernel.
-    const appShell = api.serviceContainer.get<IApplicationShell>(IApplicationShell);
-    const showInformationMessage = sinon.stub(appShell, 'showInformationMessage').callsFake(function (message: string) {
+    const showInformationMessage = sinon.stub(window, 'showInformationMessage').callsFake(function (message: string) {
         traceInfo(`Step 2. ShowInformationMessage ${message}`);
         if (message === DataScience.restartKernelMessage) {
             traceInfo(`Step 3. ShowInformationMessage & yes to restart`);
             // User clicked ok to restart it.
             return DataScience.restartKernelMessageYes;
         }
-        return (appShell.showInformationMessage as any).wrappedMethod.apply(appShell, arguments);
+        return (window.showInformationMessage as any).wrappedMethod.apply(window, arguments);
     });
     return { dispose: () => showInformationMessage.restore() };
 }

@@ -2,14 +2,14 @@
 // Licensed under the MIT License.
 
 import { ExtensionMode, Uri, commands, window, workspace } from 'vscode';
-import { JupyterServerSelector } from '../../kernels/jupyter/connection/serverSelector';
+import { CodespacesJupyterServerSelector } from '../../codespaces/codeSpacesServerSelector';
 import { IJupyterServerProviderRegistry } from '../../kernels/jupyter/types';
 import { IPythonApiProvider, PythonApi } from '../../platform/api/types';
-import { isTestExecution, JVSC_EXTENSION_ID, Telemetry } from '../../platform/common/constants';
+import { CodespaceExtensionId, isTestExecution, JVSC_EXTENSION_ID, Telemetry } from '../../platform/common/constants';
 import { IDisposable, IExtensionContext, IExtensions } from '../../platform/common/types';
 import { IServiceContainer, IServiceManager } from '../../platform/ioc/types';
 import { traceError } from '../../platform/logging';
-import { IControllerRegistration } from '../../notebooks/controllers/types';
+import { IControllerRegistration, ILocalPythonNotebookKernelSourceSelector } from '../../notebooks/controllers/types';
 import { sendTelemetryEvent } from '../../telemetry';
 import { isRemoteConnection } from '../../kernels/types';
 import {
@@ -21,8 +21,10 @@ import {
     JupyterServerProvider
 } from '../../api';
 import { stripCodicons } from '../../platform/common/helpers';
-import { jupyterServerUriToCollection } from '../../kernels/jupyter/connection/jupyterServerProviderRegistry';
 import { getKernelsApi } from '../../kernels/api/api';
+import { jupyterServerUriToCollection } from '../../codespaces';
+import { isWeb } from '../../platform/common/utils/misc';
+import { EnvironmentPath } from '@vscode/python-extension';
 
 export const IExportedKernelServiceFactory = Symbol('IExportedKernelServiceFactory');
 export interface IExportedKernelServiceFactory {
@@ -128,14 +130,16 @@ export function buildApi(
             apiProvider.setApi(pythonApi);
         },
         registerRemoteServerProvider(provider: IJupyterUriProvider): IDisposable {
-            traceError(
-                'The API registerRemoteServerProvider has being deprecated and will be removed soon, please use createJupyterServerCollection.'
-            );
-
             const extensions = serviceContainer.get<IExtensions>(IExtensions);
             const extensionId = provider.id.startsWith('_builtin')
                 ? JVSC_EXTENSION_ID
                 : extensions.determineExtensionFromCallStack().extensionId;
+            traceError(
+                `The API registerRemoteServerProvider has being deprecated and will be removed soon, please use createJupyterServerCollection (extension ${extensionId}).`
+            );
+            if (extensionId.toLowerCase() != CodespaceExtensionId.toLowerCase()) {
+                throw new Error('Deprecated API');
+            }
             sendTelemetryEvent(Telemetry.JupyterApiUsage, undefined, {
                 clientExtId: extensionId,
                 pemUsed: 'registerRemoteServerProvider'
@@ -170,12 +174,15 @@ export function buildApi(
                 'The API addRemoteJupyterServer has being deprecated and will be removed soon, please use createJupyterServerCollection.'
             );
             const extensionId = extensions.determineExtensionFromCallStack().extensionId;
+            if (extensionId.toLowerCase() != CodespaceExtensionId.toLowerCase()) {
+                throw new Error('Deprecated API');
+            }
             sendTelemetryEvent(Telemetry.JupyterApiUsage, undefined, {
                 clientExtId: extensionId,
                 pemUsed: 'addRemoteJupyterServer'
             });
 
-            const selector = serviceContainer.get<JupyterServerSelector>(JupyterServerSelector);
+            const selector = serviceContainer.get<CodespacesJupyterServerSelector>(CodespacesJupyterServerSelector);
 
             const controllerRegistration = serviceContainer.get<IControllerRegistration>(IControllerRegistration);
             const controllerCreatedPromise = waitForNotebookControllersCreationForServer(
@@ -185,15 +192,32 @@ export function buildApi(
             await selector.addJupyterServer({ id: providerId, handle, extensionId });
             await controllerCreatedPromise;
         },
-        openNotebook: async (uri: Uri, kernelId: string) => {
+        openNotebook: async (uri: Uri, kernelOrPythonEnvId: string | EnvironmentPath) => {
             sendTelemetryEvent(Telemetry.JupyterApiUsage, undefined, {
                 clientExtId: extensions.determineExtensionFromCallStack().extensionId,
                 pemUsed: 'openNotebook'
             });
             const controllers = serviceContainer.get<IControllerRegistration>(IControllerRegistration);
-            const id = controllers.all.find((controller) => controller.id === kernelId)?.id;
+            const kernelId = typeof kernelOrPythonEnvId === 'string' ? kernelOrPythonEnvId : undefined;
+            const pythonEnv = typeof kernelOrPythonEnvId === 'string' ? undefined : kernelOrPythonEnvId;
+            let id = kernelId && controllers.all.find((controller) => controller.id === kernelOrPythonEnvId)?.id;
+            if (!id && pythonEnv && !isWeb()) {
+                // Look for a python environment with this id.
+                id = controllers.all.find(
+                    (controller) =>
+                        controller.kind === 'startUsingPythonInterpreter' && controller.interpreter.id === pythonEnv.id
+                )?.id;
+                if (!id) {
+                    // Controller has not yet been created.
+                    const selector = serviceContainer.get<ILocalPythonNotebookKernelSourceSelector>(
+                        ILocalPythonNotebookKernelSourceSelector
+                    );
+                    const connection = await selector.getKernelConnection(pythonEnv);
+                    id = connection && controllers.all.find((controller) => controller.id === connection?.id)?.id;
+                }
+            }
             if (!id) {
-                throw new Error(`Kernel ${kernelId} not found.`);
+                throw new Error(`Kernel ${kernelOrPythonEnvId} not found.`);
             }
             const notebookEditor =
                 window.activeNotebookEditor?.notebook?.uri?.toString() === uri.toString()

@@ -10,8 +10,6 @@ import * as uriPath from '../../../platform/vscode-path/resources';
 import * as sinon from 'sinon';
 import { anything, instance, mock, when, verify } from 'ts-mockito';
 import { IPlatformService } from '../../../platform/common/platform/types';
-import { IInterpreterService } from '../../../platform/interpreter/contracts';
-import { WorkspaceService } from '../../../platform/common/application/workspace.node';
 import { CustomEnvironmentVariablesProvider } from '../../../platform/common/variables/customEnvironmentVariablesProvider.node';
 import { InterpreterService } from '../../../platform/api/pythonApi';
 import {
@@ -29,7 +27,7 @@ import { IPythonExtensionChecker } from '../../../platform/api/types';
 import { PYTHON_LANGUAGE } from '../../../platform/common/constants';
 import * as platform from '../../../platform/common/utils/platform';
 import { CancellationTokenSource, Disposable, EventEmitter, Memento, Uri } from 'vscode';
-import { IDisposable, IExtensionContext, IExtensions } from '../../../platform/common/types';
+import { IDisposable, IExtensionContext } from '../../../platform/common/types';
 import { dispose } from '../../../platform/common/utils/lifecycle';
 import {
     BaseKernelConnectionMetadata,
@@ -41,7 +39,7 @@ import {
 import { JupyterPaths } from './jupyterPaths.node';
 import { loadKernelSpec } from './localKernelSpecFinderBase.node';
 import { LocalKnownPathKernelSpecFinder } from './localKnownPathKernelSpecFinder.node';
-import { OldLocalPythonAndRelatedNonPythonKernelSpecFinder } from './localPythonAndRelatedNonPythonKernelSpecFinder.old.node';
+import { LocalPythonAndRelatedNonPythonKernelSpecFinder } from './localPythonAndRelatedNonPythonKernelSpecFinder.node';
 import { getDisplayPathFromLocalFile } from '../../../platform/common/platform/fs-paths.node';
 import { PythonExtensionChecker } from '../../../platform/api/pythonApi';
 import { KernelFinder } from '../../kernelFinder';
@@ -59,7 +57,6 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
 [false, true].forEach((isWindows) => {
     suite(`Contributed Local Kernel Spec Finder ${isWindows ? 'Windows' : 'Unix'}`, () => {
         let kernelFinder: KernelFinder;
-        let interpreterService: IInterpreterService;
         let platformService: IPlatformService;
         let fs: FileSystem;
         let extensionChecker: IPythonExtensionChecker;
@@ -97,7 +94,7 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
             cancelToken = new CancellationTokenSource();
             const getOSTypeStub = sinon.stub(platform, 'getOSType');
             getOSTypeStub.returns(isWindows ? platform.OSType.Windows : platform.OSType.Linux);
-            interpreterService = mock(InterpreterService);
+            const interpreterService = mock(InterpreterService);
             onDidChangeInterpreter = new EventEmitter<PythonEnvironment | undefined>();
             onDidChangeInterpreters = new EventEmitter<PythonEnvironment[]>();
             onDidChangeInterpreterStatus = new EventEmitter<void>();
@@ -126,6 +123,7 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
             when(interpreterService.resolvedEnvironments).thenReturn(Array.from(distinctInterpreters));
             when(interpreterService.getActiveInterpreter(anything())).thenResolve(activeInterpreter);
             when(interpreterService.getInterpreterDetails(anything())).thenResolve();
+            when(interpreterService.getInterpreterDetails(anything(), anything())).thenResolve();
             platformService = mock(PlatformService);
             when(platformService.isWindows).thenReturn(isWindows);
             when(platformService.isLinux).thenReturn(!isWindows);
@@ -136,13 +134,6 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
             when(fs.exists(anything())).thenResolve(true);
             const env = mock<IApplicationEnvironment>();
             when(env.extensionVersion).thenReturn('');
-            const workspaceService = mock(WorkspaceService);
-            const testWorkspaceFolder = Uri.file(path.join(EXTENSION_ROOT_DIR, 'src', 'test', 'datascience'));
-
-            when(workspaceService.getWorkspaceFolderIdentifier(anything(), anything())).thenCall((_a, b) => {
-                return Promise.resolve(b);
-            });
-            when(workspaceService.rootFolder).thenReturn(testWorkspaceFolder);
             const envVarsProvider = mock(CustomEnvironmentVariablesProvider);
             when(envVarsProvider.getEnvironmentVariables(anything(), anything())).thenResolve({});
             const event = new EventEmitter<Uri | undefined>();
@@ -171,7 +162,8 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
                 instance(memento),
                 instance(fs),
                 instance(context),
-                instance(pythonExecFactory)
+                instance(pythonExecFactory),
+                instance(interpreterService)
             );
 
             const kernelSpecsBySpecFile = new Map<string, KernelSpec.ISpecModel>();
@@ -228,7 +220,6 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
             when(fs.exists(anything())).thenResolve(true);
             const nonPythonKernelSpecFinder = new LocalKnownPathKernelSpecFinder(
                 instance(fs),
-                instance(workspaceService),
                 jupyterPaths,
                 instance(extensionChecker),
                 instance(memento),
@@ -244,7 +235,6 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
             disposables.push(onDidChangeEvent);
             when(uriStorage.onDidChange).thenReturn(onDidChangeEvent.event);
 
-            const extensions = mock<IExtensions>();
             const trustedKernels = mock<ITrustedKernelPaths>();
             when(trustedKernels.isTrusted(anything())).thenReturn(true);
             kernelFinder = new KernelFinder(disposables);
@@ -252,10 +242,9 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
             const serviceContainer = mock<ServiceContainer>();
             const iocStub = sinon.stub(ServiceContainer, 'instance').get(() => instance(serviceContainer));
             disposables.push(new Disposable(() => iocStub.restore()));
-            const pythonKernelFinderWrapper = new OldLocalPythonAndRelatedNonPythonKernelSpecFinder(
+            const pythonKernelFinderWrapper = new LocalPythonAndRelatedNonPythonKernelSpecFinder(
                 instance(interpreterService),
                 instance(fs),
-                instance(workspaceService),
                 jupyterPaths,
                 instance(extensionChecker),
                 nonPythonKernelSpecFinder,
@@ -271,8 +260,7 @@ import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platf
                 kernelFinder,
                 [],
                 instance(extensionChecker),
-                instance(interpreterService),
-                instance(extensions)
+                instance(interpreterService)
             );
             changeEventFired = createEventHandler(kernelFinder, 'onDidChangeKernels', disposables);
             localKernelSpecFinder.activate();

@@ -20,6 +20,7 @@ export const NOTEBOOK_SELECTOR = [
     { scheme: NotebookCellScheme, language: PYTHON_LANGUAGE }
 ];
 
+export const CodespaceExtensionId = 'GitHub.codespaces';
 export const JVSC_EXTENSION_ID = 'ms-toolsai.jupyter';
 export const JUPYTER_HUB_EXTENSION_ID = 'ms-toolsai.jupyter-hub';
 export const AppinsightsKey = '0c6ae279ed8443289764825290e4f9e2-1a736e7c-1324-4338-be46-fc2a58ae4d14-7255';
@@ -34,13 +35,7 @@ export namespace HelpLinks {
 }
 
 export namespace Settings {
-    export const JupyterServerLocalLaunch = 'local';
-    export const JupyterServerRemoteLaunch = 'remote';
-    export const JupyterServerUriList = 'jupyter.jupyterServer.uriList';
-    export const JupyterServerRemoteLaunchUriListKey = 'remote-uri-list';
-    export const JupyterServerRemoteLaunchUriSeparator = '\r';
     export const JupyterServerRemoteLaunchNameSeparator = '\n';
-    export const JupyterServerRemoteLaunchUriEqualsDisplayName = 'same';
     export const JupyterServerRemoteLaunchService = JVSC_EXTENSION_ID;
     export const JupyterServerUriListMax = 10;
     // If this timeout expires, ignore the completion request sent to Jupyter.
@@ -76,7 +71,6 @@ export function setUnitTestExecution(enabled: boolean) {
 
 export namespace Identifiers {
     export const GeneratedThemeName = 'ipython-theme'; // This needs to be all lower class and a valid class name.
-    export const RawPurpose = 'raw';
     export const MatplotLibDefaultParams = '_VSCode_defaultMatplotlib_Params';
     export const MatplotLibFigureFormats = '_VSCode_matplotLib_FigureFormats';
     export const DefaultCodeCellMarker = '# %%';
@@ -96,7 +90,6 @@ export namespace Identifiers {
 export namespace CodeSnippets {
     export const ImportIPython = '{0}\nfrom IPython import get_ipython\n\n{1}';
     export const MatplotLibInit = `import matplotlib\n%matplotlib inline\n${Identifiers.MatplotLibDefaultParams} = dict(matplotlib.rcParams)\n`;
-    export const AppendSVGFigureFormat = `import matplotlib_inline.backend_inline\n${Identifiers.MatplotLibFigureFormats} = matplotlib_inline.backend_inline.InlineBackend.instance().figure_formats\n${Identifiers.MatplotLibFigureFormats}.add('svg')\nmatplotlib_inline.backend_inline.set_matplotlib_formats(*${Identifiers.MatplotLibFigureFormats})`;
     export const UpdateCWDAndPath =
         'import os as _VSCODE_os\nimport sys as _VSCODE_sys\n%cd "{0}"\nif _VSCODE_os.getcwd() not in _VSCODE_sys.path:\n    _VSCODE_sys.path.insert(0, _VSCODE_os.getcwd())\n\ndel _VSCODE_sys\ndel _VSCODE_os';
     export const DisableJedi = '%config Completer.use_jedi = False';
@@ -385,6 +378,9 @@ export enum Telemetry {
     KernelSpec = 'DS_INTERNAL.JUPYTER_KERNEL_SPEC',
     CellOutputMimeType = 'DS_INTERNAL.CELL_OUTPUT_MIME_TYPE',
     JupyterApiUsage = 'DATASCIENCE.JUPYTER_API_USAGE',
+    KernelCodeCompletion = 'DATASCIENCE.JUPYTER_KERNEL_CODE_COMPLETION',
+    KernelCodeCompletionResolve = 'DATASCIENCE.JUPYTER_KERNEL_CODE_COMPLETION_RESOLVE',
+    KernelCodeCompletionCannotResolve = 'DATASCIENCE.JUPYTER_KERNEL_CODE_COMPLETION_CANNOT_RESOLVE',
     JupyterKernelApiUsage = 'DATASCIENCE.JUPYTER_KERNEL_API_USAGE',
     NewJupyterKernelApiUsage = 'DATASCIENCE.JUPYTER_NEW_KERNEL_API_USAGE',
     NewJupyterKernelsApiUsage = 'DATASCIENCE.JUPYTER_NEW_KERNELS_API_USAGE',
@@ -406,6 +402,7 @@ export enum Telemetry {
     KernelLauncherPerf = 'DS_INTERNAL.KERNEL_LAUNCHER_PERF',
     AmbiguousGlobalKernelSpec = 'GLOBAL_PYTHON_KERNELSPEC',
     ActiveInterpreterListingPerf = 'DS_INTERNAL.ACTIVE_INTERPRETER_LISTING_PERF',
+    ExperimentLoad = 'DS_INTERNAL.EXPERIMENT_LOAD',
     PythonModuleInstall = 'DS_INTERNAL.PYTHON_MODULE_INSTALL',
     PythonNotInstalled = 'DS_INTERNAL.PYTHON_NOT_INSTALLED',
     PythonExtensionNotInstalled = 'DS_INTERNAL.PYTHON_EXTENSION_NOT_INSTALLED',
@@ -443,6 +440,7 @@ export enum Telemetry {
     SwitchKernel = 'DS_INTERNAL.SWITCH_KERNEL',
     KernelCount = 'DS_INTERNAL.KERNEL_COUNT',
     ExecuteCell = 'DATASCIENCE.EXECUTE_CELL',
+    ExecuteCode = 'DATASCIENCE.EXECUTE_CODE',
     ResumeCellExecution = 'DATASCIENCE.RESUME_EXECUTE_CELL',
     /**
      * Sent when a command we register is executed.

@@ -2,19 +2,13 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, named, optional } from 'inversify';
-import { DebugConfiguration, Uri } from 'vscode';
+import { DebugConfiguration, Uri, commands, window, workspace } from 'vscode';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import { convertDebugProtocolVariableToIJupyterVariable } from '../../../kernels/variables/helpers';
-import { IJupyterVariables } from '../../../kernels/variables/types';
+import { IJupyterVariable, IJupyterVariables } from '../../../kernels/variables/types';
 import { IExtensionSyncActivationService } from '../../../platform/activation/types';
 import { ICommandNameArgumentTypeMapping } from '../../../commands';
-import {
-    IApplicationShell,
-    ICommandManager,
-    IDebugService,
-    IVSCodeNotebook,
-    IWorkspaceService
-} from '../../../platform/common/application/types';
+import { IDebugService } from '../../../platform/common/application/types';
 import { Commands, Identifiers, JupyterNotebookView, Telemetry } from '../../../platform/common/constants';
 import { IPlatformService } from '../../../platform/common/platform/types';
 import { IConfigurationService, IDisposableRegistry } from '../../../platform/common/types';
@@ -23,7 +17,6 @@ import { noop } from '../../../platform/common/utils/misc';
 import { untildify } from '../../../platform/common/utils/platform';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
 import { traceError, traceInfo } from '../../../platform/logging';
-import { IShowDataViewerFromVariablePanel } from '../../../messageTypes';
 import { sendTelemetryEvent } from '../../../telemetry';
 import { EventName } from '../../../platform/telemetry/constants';
 import { IDataScienceErrorHandler } from '../../../kernels/errors/types';
@@ -38,10 +31,8 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
     private dataViewerChecker: DataViewerChecker;
     constructor(
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
-        @inject(ICommandManager) private readonly commandManager: ICommandManager,
         @inject(IDebugService) @optional() private debugService: IDebugService | undefined,
         @inject(IConfigurationService) configService: IConfigurationService,
-        @inject(IApplicationShell) private readonly appShell: IApplicationShell,
         @inject(IJupyterVariableDataProviderFactory)
         @optional()
         private readonly jupyterVariableDataProviderFactory: IJupyterVariableDataProviderFactory | undefined,
@@ -50,27 +41,25 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
         @optional()
         @named(Identifiers.DEBUGGER_VARIABLES)
         private variableProvider: IJupyterVariables | undefined,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
         @inject(IDataScienceErrorHandler) private readonly errorHandler: IDataScienceErrorHandler,
         @inject(IDataViewerDependencyService)
         @optional()
         private readonly dataViewerDependencyService: IDataViewerDependencyService | undefined,
         @inject(IInterpreterService) @optional() private readonly interpreterService: IInterpreterService | undefined,
         @inject(IPlatformService) private readonly platformService: IPlatformService,
-        @inject(IVSCodeNotebook) private readonly notebooks: IVSCodeNotebook,
         @inject(IKernelProvider) private readonly kernelProvider: IKernelProvider,
         @inject(IInteractiveWindowProvider) private interactiveWindowProvider: IInteractiveWindowProvider
     ) {
-        this.dataViewerChecker = new DataViewerChecker(configService, appShell);
-        if (!this.workspace.isTrusted) {
-            this.workspace.onDidGrantWorkspaceTrust(this.registerCommandsIfTrusted, this, this.disposables);
+        this.dataViewerChecker = new DataViewerChecker(configService);
+        if (!workspace.isTrusted) {
+            workspace.onDidGrantWorkspaceTrust(this.registerCommandsIfTrusted, this, this.disposables);
         }
     }
     activate() {
         this.registerCommandsIfTrusted();
     }
     private registerCommandsIfTrusted() {
-        if (!this.workspace.isTrusted) {
+        if (!workspace.isTrusted) {
             return;
         }
         this.registerCommand(Commands.ShowDataViewer, this.onVariablePanelShowDataViewerRequest);
@@ -80,10 +69,10 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
         U extends ICommandNameArgumentTypeMapping[E]
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
     >(command: E, callback: (...args: U) => any) {
-        const disposable = this.commandManager.registerCommand(command, callback, this);
+        const disposable = commands.registerCommand(command, callback, this);
         this.disposables.push(disposable);
     }
-    private async onVariablePanelShowDataViewerRequest(request: IShowDataViewerFromVariablePanel) {
+    private async onVariablePanelShowDataViewerRequest(request: IJupyterVariable) {
         sendTelemetryEvent(EventName.OPEN_DATAVIEWER_FROM_VARIABLE_WINDOW_REQUEST);
         if (
             this.debugService?.activeDebugSession &&
@@ -107,7 +96,7 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
                 }
 
                 const variable = convertDebugProtocolVariableToIJupyterVariable(
-                    request.variable as DebugProtocol.Variable
+                    request as unknown as DebugProtocol.Variable
                 );
                 const jupyterVariable = await this.variableProvider.getFullVariable(variable);
                 const jupyterVariableDataProvider = await this.jupyterVariableDataProviderFactory.create(
@@ -133,23 +122,23 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
                 if (activeKernel && this.jupyterVariableDataProviderFactory && this.dataViewerFactory) {
                     // Create a variable data provider and pass it to the data viewer factory to create the data viewer
                     const jupyterVariableDataProvider = await this.jupyterVariableDataProviderFactory.create(
-                        request.variable,
+                        request,
                         activeKernel
                     );
 
-                    const title: string = `${DataScience.dataExplorerTitle} - ${request.variable.name}`;
+                    const title: string = `${DataScience.dataExplorerTitle} - ${request.name}`;
                     return await this.dataViewerFactory.create(jupyterVariableDataProvider, title);
                 }
             } catch (e) {
                 traceError(e);
                 sendTelemetryEvent(Telemetry.FailedShowDataViewer);
-                this.appShell.showErrorMessage(DataScience.showDataViewerFail).then(noop, noop);
+                window.showErrorMessage(DataScience.showDataViewerFail).then(noop, noop);
             }
         }
     }
 
     private getActiveKernel() {
-        const activeNotebook = this.notebooks.activeNotebookEditor?.notebook;
+        const activeNotebook = window.activeNotebookEditor?.notebook;
         const activeJupyterNotebookKernel =
             activeNotebook?.notebookType == JupyterNotebookView ? this.kernelProvider.get(activeNotebook) : undefined;
 
@@ -175,7 +164,7 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
         if (!interactiveWindow) {
             return;
         }
-        return this.notebooks.notebookDocuments.find(
+        return workspace.notebookDocuments.find(
             (notebookDocument) => notebookDocument === interactiveWindow?.notebookDocument
         );
     }

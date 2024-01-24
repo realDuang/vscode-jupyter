@@ -10,7 +10,9 @@ import {
     DebugSessionOptions,
     NotebookCell,
     NotebookDocument,
-    NotebookEditor
+    NotebookEditor,
+    window,
+    workspace
 } from 'vscode';
 import { IKernelProvider } from '../../../kernels/types';
 import { IControllerRegistration } from '../../../notebooks/controllers/types';
@@ -23,12 +25,7 @@ import {
 } from '../../../notebooks/debugger/debuggingTypes';
 import { assertIsInteractiveWindowDebugConfig, IpykernelCheckResult } from '../../../notebooks/debugger/helper';
 import { IExtensionSyncActivationService } from '../../../platform/activation/types';
-import {
-    IApplicationShell,
-    ICommandManager,
-    IDebugService,
-    IVSCodeNotebook
-} from '../../../platform/common/application/types';
+import { IDebugService } from '../../../platform/common/application/types';
 import { IPlatformService } from '../../../platform/common/platform/types';
 import { IConfigurationService } from '../../../platform/common/types';
 import { DataScience } from '../../../platform/common/utils/localize';
@@ -55,9 +52,6 @@ export class InteractiveWindowDebuggingManager
     public constructor(
         @inject(IKernelProvider) kernelProvider: IKernelProvider,
         @inject(IControllerRegistration) controllerRegistration: IControllerRegistration,
-        @inject(ICommandManager) commandManager: ICommandManager,
-        @inject(IApplicationShell) appShell: IApplicationShell,
-        @inject(IVSCodeNotebook) vscNotebook: IVSCodeNotebook,
         @inject(IPlatformService) private readonly platform: IPlatformService,
         @inject(IDebugLocationTrackerFactory)
         private readonly debugLocationTrackerFactory: IDebugLocationTrackerFactory,
@@ -65,7 +59,7 @@ export class InteractiveWindowDebuggingManager
         @inject(IDebugService) private readonly debugService: IDebugService,
         @inject(IServiceContainer) serviceContainer: IServiceContainer
     ) {
-        super(kernelProvider, controllerRegistration, commandManager, appShell, vscNotebook, serviceContainer);
+        super(kernelProvider, controllerRegistration, serviceContainer);
     }
 
     public override activate() {
@@ -117,7 +111,7 @@ export class InteractiveWindowDebuggingManager
         const config = session.configuration as IInteractiveWindowDebugConfig;
         assertIsInteractiveWindowDebugConfig(config);
 
-        const notebook = this.vscNotebook.notebookDocuments.find((doc) => doc.uri.toString() === config.__notebookUri);
+        const notebook = workspace.notebookDocuments.find((doc) => doc.uri.toString() === config.__notebookUri);
         if (!notebook || typeof config.__cellIndex !== 'number') {
             traceError('Invalid debug session for debugging of IW using Jupyter Protocol');
             return;
@@ -151,7 +145,7 @@ export class InteractiveWindowDebuggingManager
     ): Promise<DebugAdapterDescriptor | undefined> {
         const kernel = await this.ensureKernelIsRunning(notebook);
         if (!kernel?.session) {
-            this.appShell.showInformationMessage(DataScience.kernelWasNotStarted).then(noop, noop);
+            window.showInformationMessage(DataScience.kernelWasNotStarted).then(noop, noop);
             return;
         }
         const adapter = new KernelDebugAdapter(
@@ -168,7 +162,7 @@ export class InteractiveWindowDebuggingManager
 
         const cell = notebook.cellAt(config.__cellIndex);
         const controller = new DebugCellController(adapter, cell, this.kernelProvider.getKernelExecution(kernel!));
-        adapter.addDebuggingDelegates([controller, new RestartNotSupportedController(cell, this.serviceContainer)]);
+        adapter.addDebuggingDelegates([controller, new RestartNotSupportedController(cell)]);
         controller.ready
             .then(() => dbgr.resolve())
             .catch((ex) => console.error('Failed waiting for controller to be ready', ex));

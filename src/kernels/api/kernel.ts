@@ -1,45 +1,59 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { l10n, CancellationToken, ProgressLocation, extensions, window, Disposable, Event } from 'vscode';
-import { Kernel, OutputItem } from '../../api';
+import {
+    l10n,
+    CancellationToken,
+    ProgressLocation,
+    extensions,
+    window,
+    Disposable,
+    workspace,
+    NotebookDocument,
+    Event,
+    EventEmitter
+} from 'vscode';
+import { Kernel, KernelStatus, Output } from '../../api';
 import { ServiceContainer } from '../../platform/ioc/container';
 import { IKernel, IKernelProvider, INotebookKernelExecution } from '../types';
 import { getDisplayNameOrNameOfKernelConnection } from '../helpers';
-import { IDisposable } from '../../platform/common/types';
-import { dispose } from '../../platform/common/utils/lifecycle';
+import { IDisposable, IDisposableRegistry } from '../../platform/common/types';
+import { DisposableBase, dispose } from '../../platform/common/utils/lifecycle';
 import { noop } from '../../platform/common/utils/misc';
 import { getTelemetrySafeHashedString } from '../../platform/telemetry/helpers';
 import { Telemetry, sendTelemetryEvent } from '../../telemetry';
 import { StopWatch } from '../../platform/common/utils/stopWatch';
 import { Deferred, createDeferred, sleep } from '../../platform/common/utils/async';
 import { once } from '../../platform/common/utils/events';
-import { traceError, traceVerbose } from '../../platform/logging';
+import { traceVerbose } from '../../platform/logging';
+import { PYTHON_LANGUAGE } from '../../platform/common/constants';
 
-function getExtensionDisplayName(extensionId: string) {
-    const extensionDisplayName = extensions.getExtension(extensionId)?.packageJSON.displayName;
-    return extensionDisplayName ? `${extensionDisplayName} (${extensionId})` : extensionId;
-}
 /**
  * Displays a progress indicator when 3rd party extensions execute code against a kernel.
+ * The progress indicator is displayed only when the notebook is visible.
+ *
  * We need this to notify users when execution takes place for:
- * 1. Transparency
+ * 1. Transparency (they might not know that some code is being executed in a kernel)
  * 2. If users experience delays in kernel execution within notebooks, then they have an idea why this might be the case.
  */
 class KernelExecutionProgressIndicator {
     private readonly controllerDisplayName: string;
+    private readonly notebook?: NotebookDocument;
     private deferred?: Deferred<void>;
     private disposable?: IDisposable;
+    private eventHandler: IDisposable;
     private readonly title: string;
     private displayInProgress?: boolean;
-    constructor(
-        private readonly extensionDisplayName: string,
-        kernel: IKernel
-    ) {
+    private shouldDisplayProgress?: boolean;
+    constructor(extensionId: string, kernel: IKernel) {
+        const extensionDisplayName = extensions.getExtension(extensionId)?.packageJSON?.displayName || extensionId;
+        this.notebook = workspace.notebookDocuments.find((n) => n.uri.toString() === kernel.resourceUri?.toString());
         this.controllerDisplayName = getDisplayNameOrNameOfKernelConnection(kernel.kernelConnectionMetadata);
-        this.title = l10n.t(`Executing code in {0} from {1}`, this.controllerDisplayName, this.extensionDisplayName);
+        this.title = l10n.t(`Executing code in {0} from {1}`, this.controllerDisplayName, extensionDisplayName);
+        this.eventHandler = window.onDidChangeVisibleNotebookEditors(this.showProgressImpl, this);
     }
     dispose() {
+        this.eventHandler.dispose();
         this.disposable?.dispose();
     }
 
@@ -56,30 +70,44 @@ class KernelExecutionProgressIndicator {
         return (this.disposable = new Disposable(() => this.deferred?.resolve()));
     }
     private async showProgress() {
-        // Give a grace period of 500ms to avoid too many progress indicators.
+        // Give a grace period of 500ms to avoid displaying progress indicators too aggressively.
         await sleep(500);
         if (!this.deferred || this.deferred.completed || this.displayInProgress) {
             return;
         }
+        this.shouldDisplayProgress = true;
+        await Promise.all([this.showProgressImpl(), this.waitUntilCompleted()]);
+        this.shouldDisplayProgress = false;
+    }
+    private async showProgressImpl() {
+        if (!this.notebook || !this.shouldDisplayProgress) {
+            return;
+        }
+        if (!window.visibleNotebookEditors.some((e) => e.notebook === this.notebook)) {
+            return;
+        }
         this.displayInProgress = true;
-        await window.withProgress({ location: ProgressLocation.Notification, title: this.title }, async () => {
-            let deferred = this.deferred;
-            while (deferred && !deferred.completed) {
-                await deferred.promise;
-                deferred = this.deferred;
-            }
-        });
+        await window.withProgress({ location: ProgressLocation.Notification, title: this.title }, async () =>
+            this.waitUntilCompleted()
+        );
         this.displayInProgress = false;
+    }
+    private async waitUntilCompleted() {
+        let deferred = this.deferred;
+        while (deferred && !deferred.completed) {
+            await deferred.promise;
+            deferred = this.deferred;
+        }
     }
 }
 
 /**
  * Design guidelines for separate kernel per extension.
- * Asseume extrension A & B use the same kernel and use this API.
+ * Assume extension A & B use the same kernel and use this API.
  * Both can send code and so can the user via a notebook/iw.
  * Assume user executes code via notebook/iw and that is busy.
- * 1. Extension A executes code `1` agaist kernel,
- * 2. Laster extension A excecutes another block of code `2` against the kernel.
+ * 1. Extension A executes code `1` against kernel,
+ * 2. Laster extension A executes another block of code `2` against the kernel.
  * When executing code `2`, extension A would like to cancel the first request `1`.
  * However the kernel is busy running user code, extension A should not be aware of this knowledge.
  * We should keep track of this, and prevent Extension A from interrupting user code.
@@ -96,32 +124,58 @@ class KernelExecutionProgressIndicator {
  * ensure those requests never get sent to the kernel.
  * While the requests from Extension B that are still in the queue can still get processed even after A cancels all of its requests.
  */
-class WrappedKernelPerExtension implements Kernel {
-    get status(): 'unknown' | 'starting' | 'idle' | 'busy' | 'terminating' | 'restarting' | 'autorestarting' | 'dead' {
-        // sendApiTelemetry(this.extensionId, this.kernel, 'status', this.execution.executionCount).catch(noop);
-        return this.kernel.status;
-    }
-    get onDidChangeStatus(): Event<
-        'unknown' | 'starting' | 'idle' | 'busy' | 'terminating' | 'restarting' | 'autorestarting' | 'dead'
-    > {
-        // sendApiTelemetry(this.extensionId, this.kernel, 'onDidChangeStatus', this.execution.executionCount).catch(noop);
-        return this.kernel.onStatusChanged;
-    }
-
-    private readonly extensionDisplayName: string;
+class WrappedKernelPerExtension extends DisposableBase implements Kernel {
     private readonly progress: KernelExecutionProgressIndicator;
     private previousProgress?: IDisposable;
+    private readonly _api: Kernel;
+    public readonly language: string;
+    get status(): KernelStatus {
+        return this.kernel.status;
+    }
+    private readonly _onDidChangeStatus = this._register(new EventEmitter<KernelStatus>());
+    public get onDidChangeStatus(): Event<KernelStatus> {
+        return this._onDidChangeStatus.event;
+    }
     constructor(
         private readonly extensionId: string,
         private readonly kernel: IKernel,
-        private readonly execution: INotebookKernelExecution
+        private readonly execution: INotebookKernelExecution,
+        private readonly kernelAccess: { accessAllowed: boolean }
     ) {
-        this.extensionDisplayName = getExtensionDisplayName(extensionId);
-        this.progress = new KernelExecutionProgressIndicator(this.extensionDisplayName, kernel);
-        once(kernel.onDisposed)(() => this.progress.dispose());
+        super();
+        this.progress = this._register(new KernelExecutionProgressIndicator(extensionId, kernel));
+        this._register(once(kernel.onDisposed)(() => this.progress.dispose()));
+        this.language =
+            kernel.kernelConnectionMetadata.kind === 'connectToLiveRemoteKernel'
+                ? PYTHON_LANGUAGE
+                : kernel.kernelConnectionMetadata.kernelSpec.language || PYTHON_LANGUAGE;
+        this._register(this.kernel.onStatusChanged(() => this._onDidChangeStatus.fire(this.kernel.status), this));
+        // Plain object returned to 3rd party extensions that cannot be modified or messed with.
+        const that = this;
+        this._api = Object.freeze({
+            language: this.language,
+            get status() {
+                return that.kernel.status;
+            },
+            onDidChangeStatus: that.onDidChangeStatus,
+            executeCode: (code: string, token: CancellationToken) => this.executeCode(code, token)
+        });
+    }
+    static createApiKernel(
+        extensionId: string,
+        kernel: IKernel,
+        execution: INotebookKernelExecution,
+        kernelAccess: { accessAllowed: boolean }
+    ) {
+        const wrapper = new WrappedKernelPerExtension(extensionId, kernel, execution, kernelAccess);
+        ServiceContainer.instance.get<IDisposableRegistry>(IDisposableRegistry).push(wrapper);
+        return wrapper._api;
     }
 
-    async *executeCode(code: string, token: CancellationToken): AsyncGenerator<OutputItem[], void, unknown> {
+    async *executeCode(code: string, token: CancellationToken): AsyncGenerator<Output, void, unknown> {
+        if (!this.kernelAccess.accessAllowed) {
+            throw new Error(l10n.t('Access to Jupyter Kernel has been revoked'));
+        }
         this.previousProgress?.dispose();
         let completed = false;
         const measures = {
@@ -161,60 +215,44 @@ class WrappedKernelPerExtension implements Kernel {
         }
 
         const disposables: IDisposable[] = [];
-        const done = createDeferred<void>();
         disposables.push({
             dispose: () => {
                 measures.duration = stopwatch.elapsedTime;
                 properties.mimeTypes = Array.from(mimeTypes).join(',');
                 completed = true;
-                done.resolve();
                 sendApiExecTelemetry(this.kernel, measures, properties).catch(noop);
             }
         });
         const kernelExecution = ServiceContainer.instance
             .get<IKernelProvider>(IKernelProvider)
             .getKernelExecution(this.kernel);
-        const outputs: OutputItem[][] = [];
-        let outputsReceieved = createDeferred<void>();
-        kernelExecution
-            .executeCode(code, this.extensionId, token)
-            .then((codeExecution) => {
-                codeExecution.result.finally(() => dispose(disposables)).catch(noop);
-                codeExecution.onRequestSent(
-                    () => {
-                        properties.requestSent = true;
-                        measures.requestSentAfter = stopwatch.elapsedTime;
-                        if (!token.isCancellationRequested) {
-                            const progress = (this.previousProgress = this.progress.show());
-                            disposables.push(progress);
-                        }
-                    },
-                    this,
-                    disposables
-                );
-                codeExecution.onRequestAcknowledged(
-                    () => {
-                        properties.requestAcknowledged = true;
-                        measures.requestAcknowledgedAfter = stopwatch.elapsedTime;
-                    },
-                    this,
-                    disposables
-                );
-                codeExecution.onDidEmitOutput(
-                    (e) => {
-                        e.forEach((item) => mimeTypes.add(item.mime));
-                        outputs.push(e);
-                    },
-                    this,
-                    disposables
-                );
-            })
-            .catch((ex) => {
-                traceError(
-                    `Extension ${this.extensionId} failed to execute code in kernel ${this.extensionDisplayName}`,
-                    ex
-                );
-            });
+
+        const events = {
+            started: new EventEmitter<void>(),
+            executionAcknowledged: new EventEmitter<void>()
+        };
+
+        events.started.event(
+            () => {
+                properties.requestSent = true;
+                measures.requestSentAfter = stopwatch.elapsedTime;
+                if (!token.isCancellationRequested) {
+                    const progress = (this.previousProgress = this.progress.show());
+                    disposables.push(progress);
+                }
+            },
+            this,
+            disposables
+        );
+        events.executionAcknowledged.event(
+            () => {
+                properties.requestAcknowledged = true;
+                measures.requestAcknowledgedAfter = stopwatch.elapsedTime;
+            },
+            this,
+            disposables
+        );
+
         token.onCancellationRequested(
             () => {
                 if (completed) {
@@ -224,22 +262,19 @@ class WrappedKernelPerExtension implements Kernel {
                 measures.cancelledAfter = stopwatch.elapsedTime;
                 properties.cancelledBeforeRequestSent = !properties.requestSent;
                 properties.cancelledBeforeRequestAcknowledged = !properties.requestAcknowledged;
-                traceVerbose(`Code execution cancelled by extension ${this.extensionDisplayName}`);
+                traceVerbose(`Code execution cancelled by extension ${this.extensionId}`);
             },
             this,
             disposables
         );
-        while (true) {
-            await Promise.race([outputsReceieved.promise, done.promise]);
-            if (outputsReceieved.completed) {
-                outputsReceieved = createDeferred<void>();
+
+        try {
+            for await (const output of kernelExecution.executeCode(code, this.extensionId, events, token)) {
+                output.items.forEach((output) => mimeTypes.add(output.mime));
+                yield output;
             }
-            while (outputs.length) {
-                yield outputs.shift()!;
-            }
-            if (done.completed) {
-                break;
-            }
+        } finally {
+            dispose(disposables);
         }
     }
 }
@@ -273,7 +308,16 @@ async function sendApiExecTelemetry(
     sendTelemetryEvent(Telemetry.NewJupyterKernelApiExecution, measures, properties);
 }
 
-export function createKernelApiForExetnsion(extensionId: string, kernel: IKernel) {
+export function createKernelApiForExtension(
+    extensionId: string,
+    kernel: IKernel,
+    kernelAccess: { accessAllowed: boolean }
+) {
     const kernelProvider = ServiceContainer.instance.get<IKernelProvider>(IKernelProvider);
-    return new WrappedKernelPerExtension(extensionId, kernel, kernelProvider.getKernelExecution(kernel));
+    return WrappedKernelPerExtension.createApiKernel(
+        extensionId,
+        kernel,
+        kernelProvider.getKernelExecution(kernel),
+        kernelAccess
+    );
 }

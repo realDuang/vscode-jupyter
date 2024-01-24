@@ -4,7 +4,6 @@
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { inject, injectable } from 'inversify';
 import * as path from '../vscode-path/path';
-import { IWorkspaceService } from '../common/application/types';
 import { IDisposable, Resource } from '../common/types';
 import { ICustomEnvironmentVariablesProvider, IEnvironmentVariablesService } from '../common/variables/types';
 import { EnvironmentType } from '../pythonEnvironments/info';
@@ -22,7 +21,7 @@ import { TraceOptions } from '../logging/types';
 import { pythonEnvToJupyterEnv, serializePythonEnvironment } from '../api/pythonApi';
 import { GlobalPythonExecutablePathService } from './globalPythonExePathService.node';
 import { noop } from '../common/utils/misc';
-import { CancellationToken } from 'vscode';
+import { CancellationToken, workspace } from 'vscode';
 import { raceCancellation } from '../common/cancellation';
 import { getEnvironmentType, getPythonEnvDisplayName, isCondaEnvironmentWithoutPython } from './helpers';
 import { Environment } from '@vscode/python-extension';
@@ -37,7 +36,6 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
         { promise: Promise<NodeJS.ProcessEnv | undefined>; time: StopWatch }
     >();
     constructor(
-        @inject(IWorkspaceService) private workspace: IWorkspaceService,
         @inject(IInterpreterService) private interpreterService: IInterpreterService,
         @inject(ICustomEnvironmentVariablesProvider)
         private readonly customEnvVarsService: ICustomEnvironmentVariablesProvider,
@@ -156,8 +154,8 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
     ): Promise<NodeJS.ProcessEnv | undefined> {
         resource = resource
             ? resource
-            : this.workspace.workspaceFolders?.length
-            ? this.workspace.workspaceFolders[0].uri
+            : workspace.workspaceFolders?.length
+            ? workspace.workspaceFolders[0].uri
             : undefined;
         const stopWatch = new StopWatch();
         // We'll need this later.
@@ -295,11 +293,7 @@ export class EnvironmentActivationService implements IEnvironmentActivationServi
 
         // Ensure the first path in PATH variable points to the directory of python executable.
         // We need to add this to ensure kernels start and work correctly, else things can fail miserably.
-        traceVerbose(
-            `Prepend PATH with python bin for ${getDisplayPath(environment.path)}, \n    PATH value is ${
-                env.PATH
-            } and \n    Path value is ${env.Path}`
-        );
+        traceVerbose(`Prepend PATH with python bin for ${getDisplayPath(environment.path)}`);
         // This way all executables from that env are used.
         // This way shell commands such as `!pip`, `!python` end up pointing to the right executables.
         // Also applies to `!java` where java could be an executable in the conda bin directory.

@@ -10,10 +10,10 @@ import {
     NotebookCellExecutionState,
     NotebookCellExecutionStateChangeEvent,
     Range,
-    TextDocument
+    TextDocument,
+    workspace
 } from 'vscode';
 
-import { IDocumentManager, IVSCodeNotebook, IWorkspaceService } from '../../platform/common/application/types';
 import { traceWarning, traceInfoIfCI, traceVerbose } from '../../platform/logging';
 
 import { ICellRange, IConfigurationService, IDisposableRegistry, Resource } from '../../platform/common/types';
@@ -24,6 +24,7 @@ import { CodeLensCommands, Commands, InteractiveWindowView } from '../../platfor
 import { generateCellRangesFromDocument } from './cellFactory';
 import { CodeLensPerfMeasures, ICodeLensFactory, IGeneratedCode, IGeneratedCodeStorageFactory } from './types';
 import { StopWatch } from '../../platform/common/utils/stopWatch';
+import { notebooks } from 'vscode';
 
 type CodeLensCacheData = {
     cachedDocumentVersion: number | undefined;
@@ -67,18 +68,15 @@ export class CodeLensFactory implements ICodeLensFactory {
 
     constructor(
         @inject(IConfigurationService) private configService: IConfigurationService,
-        @inject(IDocumentManager) private documentManager: IDocumentManager,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
-        @inject(IVSCodeNotebook) notebook: IVSCodeNotebook,
         @inject(IDisposableRegistry) disposables: IDisposableRegistry,
         @inject(IGeneratedCodeStorageFactory)
         private readonly generatedCodeStorageFactory: IGeneratedCodeStorageFactory,
         @inject(IKernelProvider) kernelProvider: IKernelProvider
     ) {
-        this.documentManager.onDidCloseTextDocument(this.onClosedDocument, this, disposables);
-        this.workspace.onDidGrantWorkspaceTrust(() => this.codeLensCache.clear(), this, disposables);
+        workspace.onDidCloseTextDocument(this.onClosedDocument, this, disposables);
+        workspace.onDidGrantWorkspaceTrust(() => this.codeLensCache.clear(), this, disposables);
         this.configService.getSettings(undefined).onDidChange(this.onChangedSettings, this, disposables);
-        notebook.onDidChangeNotebookCellExecutionState(this.onDidChangeNotebookCellExecutionState, this, disposables);
+        notebooks.onDidChangeNotebookCellExecutionState(this.onDidChangeNotebookCellExecutionState, this, disposables);
         kernelProvider.onDidDisposeKernel(
             (kernel) => {
                 this.notebookData.delete(kernel.notebook.uri.toString());
@@ -273,7 +271,7 @@ export class CodeLensFactory implements ICodeLensFactory {
 
         let commandsToBeDisabled: string[] = [];
         // If workspace is not trusted, then exclude execution related commands.
-        if (!this.workspace.isTrusted) {
+        if (!workspace.isTrusted) {
             commandsToBeDisabled = [
                 ...CodeLensCommands.DebuggerCommands,
                 ...CodeLensCommands.DebuggerCommands,

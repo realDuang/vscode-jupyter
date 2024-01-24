@@ -6,11 +6,10 @@
 import dedent from 'dedent';
 import { assert } from 'chai';
 import { anything, capture, deepEqual, instance, mock, verify, when } from 'ts-mockito';
-import { Uri, WorkspaceFolder } from 'vscode';
-import { IApplicationShell, ICommandManager, IWorkspaceService } from '../../platform/common/application/types';
+import { Disposable, Uri, WorkspaceFolder } from 'vscode';
 import { getDisplayPath } from '../../platform/common/platform/fs-paths';
 import { Common, DataScience } from '../../platform/common/utils/localize';
-import { IBrowserService, IConfigurationService, IExtensions } from '../../platform/common/types';
+import { IConfigurationService, IDisposable } from '../../platform/common/types';
 import {
     IKernelDependencyService,
     KernelConnectionMetadata,
@@ -42,20 +41,17 @@ import { DataScienceErrorHandlerNode } from './kernelErrorHandler.node';
 import { IFileSystem } from '../../platform/common/platform/types';
 import { IInterpreterService } from '../../platform/interpreter/contracts';
 import { JupyterServer, JupyterServerCollection, JupyterServerProvider } from '../../api';
+import { mockedVSCodeNamespaces, resetVSCodeMocks } from '../../test/vscode-mock';
+import { dispose } from '../../platform/common/utils/lifecycle';
 
 suite('Error Handler Unit Tests', () => {
-    let applicationShell: IApplicationShell;
     let dataScienceErrorHandler: DataScienceErrorHandler;
     let dependencyManager: IJupyterInterpreterDependencyManager;
-    let workspaceService: IWorkspaceService;
-    let browser: IBrowserService;
     let configuration: IConfigurationService;
     let jupyterInterpreterService: JupyterInterpreterService;
     let kernelDependencyInstaller: IKernelDependencyService;
     let uriStorage: IJupyterServerUriStorage;
     let jupyterUriProviderRegistration: IJupyterServerProviderRegistry;
-    let cmdManager: ICommandManager;
-    let extensions: IExtensions;
     let reservedPythonNames: IReservedPythonNamedProvider;
     let fs: IFileSystem;
     let interpreterService: IInterpreterService;
@@ -65,69 +61,69 @@ suite('Error Handler Unit Tests', () => {
         id: Uri.file('Some Path').fsPath,
         sysPrefix: ''
     };
-
+    let disposables: IDisposable[] = [];
     setup(() => {
-        applicationShell = mock<IApplicationShell>();
-        workspaceService = mock<IWorkspaceService>();
+        resetVSCodeMocks();
+        disposables.push(new Disposable(() => resetVSCodeMocks()));
         dependencyManager = mock<IJupyterInterpreterDependencyManager>();
         configuration = mock<IConfigurationService>();
-        browser = mock<IBrowserService>();
         uriStorage = mock<IJupyterServerUriStorage>();
-        cmdManager = mock<ICommandManager>();
         jupyterInterpreterService = mock<JupyterInterpreterService>();
         jupyterUriProviderRegistration = mock<IJupyterServerProviderRegistry>();
-        extensions = mock<IExtensions>();
-        extensions = mock<IExtensions>();
         interpreterService = mock<IInterpreterService>();
         fs = mock<IFileSystem>();
         when(dependencyManager.installMissingDependencies(anything())).thenResolve();
-        when(workspaceService.workspaceFolders).thenReturn([]);
+        when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn([]);
         kernelDependencyInstaller = mock<IKernelDependencyService>();
         when(kernelDependencyInstaller.areDependenciesInstalled(anything(), anything(), anything())).thenResolve(true);
-        when(extensions.getExtension(anything())).thenReturn({ packageJSON: { displayName: '' } } as any);
+        when(mockedVSCodeNamespaces.extensions.getExtension(anything())).thenReturn({
+            packageJSON: { displayName: '' }
+        } as any);
         when(fs.exists(anything())).thenResolve(true);
         reservedPythonNames = mock<IReservedPythonNamedProvider>();
         when(reservedPythonNames.isReserved(anything())).thenResolve(false);
         when(interpreterService.refreshInterpreters(anything())).thenResolve();
         dataScienceErrorHandler = new DataScienceErrorHandlerNode(
-            instance(applicationShell),
             instance(dependencyManager),
-            instance(browser),
             instance(configuration),
             instance(kernelDependencyInstaller),
-            instance(workspaceService),
             instance(uriStorage),
-            false,
-            instance(extensions),
             instance(jupyterUriProviderRegistration),
             instance(reservedPythonNames),
             instance(fs),
             instance(interpreterService)
         );
-        when(applicationShell.showErrorMessage(anything())).thenResolve();
-        when(applicationShell.showErrorMessage(anything(), anything())).thenResolve();
-        when(applicationShell.showErrorMessage(anything(), anything(), anything())).thenResolve();
+        when(mockedVSCodeNamespaces.window.showErrorMessage(anything())).thenResolve();
+        when(mockedVSCodeNamespaces.window.showErrorMessage(anything(), anything())).thenResolve();
+        when(mockedVSCodeNamespaces.window.showErrorMessage(anything(), anything(), anything())).thenResolve();
+        // reset(mockedVSCodeNamespaces.env);
+        when(mockedVSCodeNamespaces.env.openExternal(anything())).thenReturn(Promise.resolve(true));
+    });
+    teardown(() => {
+        disposables = dispose(disposables);
     });
     const message = 'Test error message.';
 
     test('Default error', async () => {
-        when(applicationShell.showErrorMessage(anything())).thenResolve();
+        when(mockedVSCodeNamespaces.window.showErrorMessage(anything())).thenResolve();
 
         const err = new Error(message);
         await dataScienceErrorHandler.handleError(err);
 
-        verify(applicationShell.showErrorMessage(anything())).once();
+        verify(mockedVSCodeNamespaces.window.showErrorMessage(anything())).once();
     });
 
     test('Jupyter Self Certificates Error', async () => {
-        when(applicationShell.showErrorMessage(anything(), anything(), anything())).thenResolve(message as any);
+        when(mockedVSCodeNamespaces.window.showErrorMessage(anything(), anything(), anything())).thenResolve(
+            message as any
+        );
 
         const err = new JupyterSelfCertsError(message);
         await dataScienceErrorHandler.handleError(err);
 
-        verify(applicationShell.showErrorMessage(anything())).never();
+        verify(mockedVSCodeNamespaces.window.showErrorMessage(anything())).never();
         verify(
-            applicationShell.showErrorMessage(
+            mockedVSCodeNamespaces.window.showErrorMessage(
                 err.message,
                 DataScience.jupyterSelfCertEnable,
                 DataScience.jupyterSelfCertClose
@@ -137,7 +133,7 @@ suite('Error Handler Unit Tests', () => {
 
     test('Jupyter Install Error', async () => {
         when(
-            applicationShell.showInformationMessage(
+            mockedVSCodeNamespaces.window.showInformationMessage(
                 anything(),
                 DataScience.jupyterInstall,
                 DataScience.notebookCheckForImportNo,
@@ -160,7 +156,9 @@ suite('Error Handler Unit Tests', () => {
             extensionId: ''
         };
         setup(() => {
-            when(applicationShell.showErrorMessage(anything(), Common.learnMore)).thenResolve(Common.learnMore as any);
+            when(mockedVSCodeNamespaces.window.showErrorMessage(anything(), Common.learnMore)).thenResolve(
+                Common.learnMore as any
+            );
             kernelConnection = PythonKernelConnectionMetadata.create({
                 id: '',
                 interpreter: {
@@ -326,7 +324,7 @@ suite('Error Handler Unit Tests', () => {
                     uri: Uri.file('c:\\Development\\samples\\pySamples\\sample1\\kernel_issues')
                 }
             ];
-            when(workspaceService.workspaceFolders).thenReturn(workspaceFolders);
+            when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn(workspaceFolders);
             await dataScienceErrorHandler.handleKernelError(
                 new KernelDiedError(
                     'Hello',
@@ -357,7 +355,7 @@ suite('Error Handler Unit Tests', () => {
                     uri: Uri.file('/Users/MyUserName/sample/kernel_issues')
                 }
             ];
-            when(workspaceService.workspaceFolders).thenReturn(workspaceFolders);
+            when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn(workspaceFolders);
             when(reservedPythonNames.getUriOverridingReservedPythonNames(anything())).thenResolve([
                 { uri: Uri.file('/Users/MyUserName/sample/kernel_issues/xml.py'), type: 'file' }
             ]);
@@ -386,7 +384,7 @@ suite('Error Handler Unit Tests', () => {
                     uri: Uri.file('/Users/MyUserName/sample/kernel_issues')
                 }
             ];
-            when(workspaceService.workspaceFolders).thenReturn(workspaceFolders);
+            when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn(workspaceFolders);
             when(reservedPythonNames.getUriOverridingReservedPythonNames(anything())).thenResolve([
                 { uri: Uri.file('/Users/MyUserName/sample/kernel_issues/xml/__init__.py'), type: '__init__' }
             ]);
@@ -415,7 +413,7 @@ suite('Error Handler Unit Tests', () => {
                     uri: Uri.file('/Users/MyUserName/sample/kernel_issues')
                 }
             ];
-            when(workspaceService.workspaceFolders).thenReturn(workspaceFolders);
+            when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn(workspaceFolders);
             // Lets mark everything as not being reserved, in this case, we should not
             // treat files such as xml.py as overriding the builtin python modules
             when(reservedPythonNames.getUriOverridingReservedPythonNames(anything())).thenResolve([]);
@@ -469,7 +467,7 @@ suite('Error Handler Unit Tests', () => {
                     uri: Uri.file('/home/xyz/samples/pySamples/sample/')
                 }
             ];
-            when(workspaceService.workspaceFolders).thenReturn(workspaceFolders);
+            when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn(workspaceFolders);
             await dataScienceErrorHandler.handleKernelError(
                 new KernelDiedError(
                     'Hello',
@@ -805,7 +803,13 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
                 serverProviderHandle
             });
             when(
-                applicationShell.showErrorMessage(anything(), anything(), anything(), anything(), anything())
+                mockedVSCodeNamespaces.window.showErrorMessage(
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything()
+                )
             ).thenResolve();
             const server = mock<JupyterServer>();
             when(server.id).thenReturn(serverProviderHandle.handle);
@@ -831,7 +835,7 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
             );
             assert.strictEqual(result, KernelInterpreterDependencyResponse.selectDifferentKernel);
             verify(
-                applicationShell.showErrorMessage(
+                mockedVSCodeNamespaces.window.showErrorMessage(
                     DataScience.remoteJupyterConnectionFailedWithServer(error.baseUrl),
                     deepEqual({ detail: error.originalError.message || '', modal: true }),
                     DataScience.removeRemoteJupyterConnectionButtonText,
@@ -855,7 +859,13 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
                 serverProviderHandle
             });
             when(
-                applicationShell.showErrorMessage(anything(), anything(), anything(), anything(), anything())
+                mockedVSCodeNamespaces.window.showErrorMessage(
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything()
+                )
             ).thenResolve();
             const collection = mock<JupyterServerCollection>();
             when(collection.extensionId).thenReturn(serverProviderHandle.extensionId);
@@ -875,7 +885,7 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
             );
             assert.strictEqual(result, KernelInterpreterDependencyResponse.cancel);
             verify(
-                applicationShell.showErrorMessage(
+                mockedVSCodeNamespaces.window.showErrorMessage(
                     DataScience.remoteJupyterConnectionFailedWithServer('Hello Server'),
                     deepEqual({ detail: error.originalError.message || '', modal: true }),
                     DataScience.removeRemoteJupyterConnectionButtonText,
@@ -903,7 +913,13 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
                 serverProviderHandle
             });
             when(
-                applicationShell.showErrorMessage(anything(), anything(), anything(), anything(), anything())
+                mockedVSCodeNamespaces.window.showErrorMessage(
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything()
+                )
             ).thenResolve(DataScience.removeRemoteJupyterConnectionButtonText as any);
             when(uriStorage.remove(anything())).thenResolve();
             const server = mock<JupyterServer>();
@@ -949,9 +965,17 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
                 serverProviderHandle
             });
             when(
-                applicationShell.showErrorMessage(anything(), anything(), anything(), anything(), anything())
+                mockedVSCodeNamespaces.window.showErrorMessage(
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything()
+                )
             ).thenResolve(DataScience.changeRemoteJupyterConnectionButtonText as any);
-            when(cmdManager.executeCommand(anything(), anything(), anything(), anything())).thenResolve();
+            when(
+                mockedVSCodeNamespaces.commands.executeCommand(anything(), anything(), anything(), anything())
+            ).thenResolve();
             const collection = mock<JupyterServerCollection>();
             when(collection.extensionId).thenReturn(serverProviderHandle.extensionId);
             when(collection.id).thenReturn(serverProviderHandle.id);
@@ -988,7 +1012,13 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
                 serverProviderHandle
             });
             when(
-                applicationShell.showErrorMessage(anything(), anything(), anything(), anything(), anything())
+                mockedVSCodeNamespaces.window.showErrorMessage(
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything(),
+                    anything()
+                )
             ).thenResolve(DataScience.selectDifferentKernel as any);
             const server = mock<JupyterServer>();
             when(server.id).thenReturn(serverProviderHandle.handle);
@@ -1019,15 +1049,15 @@ Failed to run jupyter as observable with args notebook --no-browser --notebook-d
                 ? message
                 : `${message} \n${DataScience.viewJupyterLogForFurtherInfo}`;
             if (linkInfo) {
-                verify(applicationShell.showErrorMessage(anything(), Common.learnMore)).once;
+                verify(mockedVSCodeNamespaces.window.showErrorMessage(anything(), Common.learnMore)).once;
             } else {
-                verify(applicationShell.showErrorMessage(anything())).once();
+                verify(mockedVSCodeNamespaces.window.showErrorMessage(anything())).once();
             }
-            const displayedMessage = capture(applicationShell.showErrorMessage).first();
+            const displayedMessage = capture(mockedVSCodeNamespaces.window.showErrorMessage).first();
             assert.strictEqual(displayedMessage[0], message);
             if (linkInfo) {
-                verify(browser.launch(anything())).once();
-                assert.strictEqual(capture(browser.launch).first()[0], linkInfo);
+                verify(mockedVSCodeNamespaces.env.openExternal(anything())).once();
+                assert.strictEqual(capture(mockedVSCodeNamespaces.env.openExternal).first()[0].toString(), linkInfo);
             }
         }
     });

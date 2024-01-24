@@ -2,10 +2,9 @@
 // Licensed under the MIT License.
 
 import { inject, injectable } from 'inversify';
-import { Disposable, EventEmitter, WorkspaceConfiguration } from 'vscode';
-import { IApplicationShell, ICommandManager, IWorkspaceService } from './application/types';
+import { Disposable, EventEmitter, WorkspaceConfiguration, commands, window, workspace } from 'vscode';
 import { traceVerbose } from '../logging';
-import { launch } from './net/browser';
+import { openInBrowser } from './net/browser';
 import { Deprecated } from './utils/localize';
 import {
     DeprecatedFeatureInfo,
@@ -55,16 +54,11 @@ export class FeatureManager implements IFeaturesManager {
     }
 
     private disposables: Disposable[] = [];
-    constructor(
-        @inject(IPersistentStateFactory) private persistentStateFactory: IPersistentStateFactory,
-        @inject(ICommandManager) private cmdMgr: ICommandManager,
-        @inject(IWorkspaceService) private workspace: IWorkspaceService,
-        @inject(IApplicationShell) private appShell: IApplicationShell
-    ) {
+    constructor(@inject(IPersistentStateFactory) private persistentStateFactory: IPersistentStateFactory) {
         this._updateFeatures();
 
         this.disposables.push(
-            this.workspace.onDidChangeConfiguration(() => {
+            workspace.onDidChangeConfiguration(() => {
                 this._updateFeatures();
             })
         );
@@ -86,7 +80,7 @@ export class FeatureManager implements IFeaturesManager {
         if (Array.isArray(deprecatedInfo.commands)) {
             deprecatedInfo.commands.forEach((cmd) => {
                 this.disposables.push(
-                    this.cmdMgr.registerCommand(cmd, () => this.notifyDeprecation(deprecatedInfo), this)
+                    commands.registerCommand(cmd, () => this.notifyDeprecation(deprecatedInfo), this)
                 );
             });
         }
@@ -105,13 +99,13 @@ export class FeatureManager implements IFeaturesManager {
         }
         const moreInfo = 'Learn more';
         const doNotShowAgain = 'Never show again';
-        const option = await this.appShell.showInformationMessage(deprecatedInfo.message, moreInfo, doNotShowAgain);
+        const option = await window.showInformationMessage(deprecatedInfo.message, moreInfo, doNotShowAgain);
         if (!option) {
             return;
         }
         switch (option) {
             case moreInfo: {
-                launch(deprecatedInfo.moreInfoUrl);
+                openInBrowser(deprecatedInfo.moreInfoUrl);
                 break;
             }
             case doNotShowAgain: {
@@ -127,19 +121,19 @@ export class FeatureManager implements IFeaturesManager {
 
     public checkAndNotifyDeprecatedSetting(deprecatedInfo: DeprecatedFeatureInfo) {
         let notify = false;
-        if (Array.isArray(this.workspace.workspaceFolders) && this.workspace.workspaceFolders.length > 0) {
-            this.workspace.workspaceFolders.forEach((workspaceFolder) => {
+        if (Array.isArray(workspace.workspaceFolders) && workspace.workspaceFolders.length > 0) {
+            workspace.workspaceFolders.forEach((workspaceFolder) => {
                 if (notify) {
                     return;
                 }
                 notify = this.isDeprecatedSettingAndValueUsed(
-                    this.workspace.getConfiguration('jupyter', workspaceFolder.uri),
+                    workspace.getConfiguration('jupyter', workspaceFolder.uri),
                     deprecatedInfo.setting!
                 );
             });
         } else {
             notify = this.isDeprecatedSettingAndValueUsed(
-                this.workspace.getConfiguration('jupyter'),
+                workspace.getConfiguration('jupyter'),
                 deprecatedInfo.setting!
             );
         }

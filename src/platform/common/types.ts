@@ -2,15 +2,12 @@
 // Licensed under the MIT License.
 
 import type * as nbformat from '@jupyterlab/nbformat';
-import { ConfigurationTarget, Disposable, Event, Extension, ExtensionContext, OutputChannel, Uri, Range } from 'vscode';
+import { ConfigurationTarget, Disposable, Event, ExtensionContext, OutputChannel, Uri, Range } from 'vscode';
 import { PythonEnvironment } from '../pythonEnvironments/info';
 import { CommandIds } from '../../commands';
-import { ICommandManager } from './application/types';
 import { ISystemVariables } from './variables/types';
 
-export const IsCodeSpace = Symbol('IsCodeSpace');
 export const IsDevMode = Symbol('IsDevMode');
-export const IsWebExtension = Symbol('IsWebExtension');
 export const IOutputChannel = Symbol('IOutputChannel');
 export interface IOutputChannel extends OutputChannel {}
 export const IsWindows = Symbol('IS_WINDOWS');
@@ -56,7 +53,6 @@ export interface IJupyterSettings {
     readonly jupyterLaunchRetries: number;
     readonly notebookFileRoot: string;
     readonly useDefaultConfigForJupyter: boolean;
-    readonly searchForJupyter: boolean;
     readonly enablePythonKernelLogging: boolean;
     readonly sendSelectionToInteractiveWindow: boolean;
     readonly normalizeSelectionForInteractiveWindow: boolean;
@@ -64,14 +60,12 @@ export interface IJupyterSettings {
     readonly markdownRegularExpression: string;
     readonly codeRegularExpression: string;
     readonly errorBackgroundColor: string;
-    readonly ignoreVscodeTheme: boolean;
     readonly variableExplorerExclude: string;
     readonly decorateCells: 'currentCell' | 'allCells' | 'disabled';
     readonly enableCellCodeLens: boolean;
     askForLargeDataFrames: boolean;
     readonly enableAutoMoveToNextCell: boolean;
     readonly askForKernelRestart: boolean;
-    readonly generateSVGPlots: boolean;
     readonly codeLenses: string;
     readonly debugCodeLenses: string;
     readonly debugpyDistPath: string;
@@ -79,14 +73,12 @@ export interface IJupyterSettings {
     readonly magicCommandsAsComments: boolean;
     readonly pythonExportMethod: 'direct' | 'commentMagics' | 'nbconvert';
     readonly stopOnError: boolean;
-    readonly remoteDebuggerPort: number;
     readonly addGotoCodeLenses: boolean;
     readonly runStartupCommands: string | string[];
     readonly debugJustMyCode: boolean;
     readonly defaultCellMarker: string;
     readonly verboseLogging: boolean;
     readonly themeMatplotlibPlots: boolean;
-    readonly variableQueries: IVariableQuery[];
     readonly disableJupyterAutoStart: boolean;
     readonly development: boolean;
     readonly jupyterCommandLineArguments: string[];
@@ -98,17 +90,17 @@ export interface IJupyterSettings {
     readonly forceIPyKernelDebugger?: boolean;
     readonly showVariableViewWhenDebugging: boolean;
     readonly newCellOnRunLast: boolean;
-    readonly pythonCompletionTriggerCharacters?: string;
     readonly logKernelOutputSeparately: boolean;
     readonly poetryPath: string;
     readonly excludeUserSitePackages: boolean;
-    readonly enableExtendedKernelCompletions: boolean;
-    /**
-     * To be removed in the future (remove around April 2023)
-     * Added as a fallback in case the new approach of resolving Python env variables for Kernels fails or does not work as expected.
-     */
-    readonly useOldKernelResolve: boolean;
+    readonly enableExtendedPythonKernelCompletions: boolean;
     readonly formatStackTraces: boolean;
+    /**
+     * Trigger characters for Jupyter completion, per language.
+     * This excludes the trigger characters for python.
+     * TODO: in debt to merge the two settings.
+     */
+    readonly completionTriggerCharacters?: Record<string, string[]>;
 }
 
 export interface IWatchableJupyterSettings extends IJupyterSettings {
@@ -135,12 +127,6 @@ export interface IExperiments {
      * Experiments user requested to opt out from manually
      */
     readonly optOutFrom: string[];
-}
-
-export interface IVariableQuery {
-    language: string;
-    query: string;
-    parseExpr: string;
 }
 
 export type InteractiveWindowMode = 'perFile' | 'single' | 'multiple';
@@ -183,7 +169,6 @@ export type DownloadOptions = {
     extension: 'tmp' | string;
 };
 
-export const IHttpClient = Symbol('IHttpClient');
 export interface IHttpClient {
     downloadFile(uri: string): Promise<Response>;
     /**
@@ -197,40 +182,7 @@ export interface IExtensionContext extends ExtensionContext {}
 
 export const IExtensions = Symbol('IExtensions');
 export interface IExtensions {
-    /**
-     * All extensions currently known to the system.
-     */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    readonly all: readonly Extension<any>[];
-
-    /**
-     * An event which fires when `extensions.all` changes. This can happen when extensions are
-     * installed, uninstalled, enabled or disabled.
-     */
-    readonly onDidChange: Event<void>;
-
-    /**
-     * Get an extension by its full identifier in the form of: `publisher.name`.
-     *
-     * @param extensionId An extension identifier.
-     * @return An extension or `undefined`.
-     */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    getExtension(extensionId: string): Extension<any> | undefined;
-
-    /**
-     * Get an extension its full identifier in the form of: `publisher.name`.
-     *
-     * @param extensionId An extension identifier.
-     * @return An extension or `undefined`.
-     */
-    getExtension<T>(extensionId: string): Extension<T> | undefined;
     determineExtensionFromCallStack(stack?: string): { extensionId: string; displayName: string };
-}
-
-export const IBrowserService = Symbol('IBrowserService');
-export interface IBrowserService {
-    launch(url: string): void;
 }
 
 export const IJupyterExtensionBanner = Symbol('IJupyterExtensionBanner');
@@ -290,7 +242,9 @@ export interface IAsyncDisposableRegistry extends IAsyncDisposable {
 }
 
 export enum Experiments {
-    DataViewerContribution = 'DataViewerContribution'
+    DataViewerContribution = 'DataViewerContribution',
+    KernelCompletions = 'KernelCompletions',
+    DoNotWaitForZmqPortsToBeUsed = 'DoNotWaitForZmqPortsToBeUsed'
 }
 
 /**
@@ -307,7 +261,7 @@ export type InterpreterUri = Resource | PythonEnvironment;
 
 export const IDataScienceCommandListener = Symbol('IDataScienceCommandListener');
 export interface IDataScienceCommandListener {
-    register(commandManager: ICommandManager): void;
+    register(): void;
 }
 
 export interface IDisplayOptions {
@@ -356,6 +310,11 @@ export interface IVariableScriptGenerator {
         stringifiedAttributeNameList: string;
     }): Promise<ScriptCode>;
     generateCodeToGetVariableTypes(options: { isDebugging: boolean }): Promise<ScriptCode>;
+    generateCodeToGetAllVariableDescriptions(options: {
+        isDebugging: boolean;
+        parent: { root: string; propertyChain: (string | number)[] } | undefined;
+        startIndex: number;
+    }): Promise<ScriptCode>;
 }
 export const IDataFrameScriptGenerator = Symbol('IDataFrameScriptGenerator');
 export interface IDataFrameScriptGenerator {

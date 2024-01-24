@@ -5,7 +5,6 @@
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { commands, CompletionList, Position, Uri, window } from 'vscode';
-import { IVSCodeNotebook } from '../../../platform/common/application/types';
 import { traceInfo } from '../../../platform/logging';
 import { IDisposable } from '../../../platform/common/types';
 import { captureScreenShot, IExtensionTestApi, initialize, startJupyterServer, waitForCondition } from '../../common';
@@ -29,7 +28,6 @@ import { PYTHON_LANGUAGE } from '../../../platform/common/constants';
 import { IS_REMOTE_NATIVE_TEST, JVSC_EXTENSION_ID_FOR_TESTS } from '../../constants';
 import { PreferredRemoteKernelIdProvider } from '../../../kernels/jupyter/connection/preferredRemoteKernelIdProvider';
 import { IServiceContainer } from '../../../platform/ioc/types';
-import { setIntellisenseTimeout } from '../../../standalone/intellisense/pythonKernelCompletionProvider';
 import { IControllerRegistration } from '../../../notebooks/controllers/types';
 import { ControllerDefaultService } from './controllerDefaultService';
 import { IJupyterServerUriStorage } from '../../../kernels/jupyter/types';
@@ -39,7 +37,6 @@ suite('Remote Execution @kernelCore', function () {
     this.timeout(120_000);
     let api: IExtensionTestApi;
     const disposables: IDisposable[] = [];
-    let vscodeNotebook: IVSCodeNotebook;
     let ipynbFile: Uri;
     let serviceContainer: IServiceContainer;
     let controllerRegistration: IControllerRegistration;
@@ -55,7 +52,6 @@ suite('Remote Execution @kernelCore', function () {
         await startJupyterServer();
         sinon.restore();
         serviceContainer = api.serviceContainer;
-        vscodeNotebook = api.serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
         controllerRegistration = api.serviceContainer.get<IControllerRegistration>(IControllerRegistration);
         controllerDefault = ControllerDefaultService.create(api.serviceContainer);
         storage = api.serviceContainer.get<IJupyterServerUriStorage>(IJupyterServerUriStorage);
@@ -104,14 +100,14 @@ suite('Remote Execution @kernelCore', function () {
         await deleteAllCellsAndWait();
         await insertCodeCell('print("123412341234")', { index: 0 });
         const cell = editor.notebook.cellAt(0)!;
-        const previousList = await storage.getAll();
+        const previousList = storage.all;
         await Promise.all([runAllCellsInActiveNotebook(), waitForExecutionCompletedSuccessfully(cell)]);
 
         // Wait for MRU to get updated & encrypted storage to get updated.
         let newList = previousList;
         await waitForCondition(
             async () => {
-                newList = await storage.getAll();
+                newList = storage.all;
                 assert.notDeepEqual(previousList, newList, 'MRU not updated');
                 return true;
             },
@@ -149,15 +145,14 @@ suite('Remote Execution @kernelCore', function () {
         });
 
         await insertCodeCell('print("123412341234")', { index: 0 });
-        const cell = vscodeNotebook.activeNotebookEditor?.notebook.cellAt(0)!;
+        const cell = window.activeNotebookEditor?.notebook.cellAt(0)!;
         await Promise.all([runCell(cell), waitForTextOutput(cell, '123412341234')]);
     });
 
     test('Remote kernels support completions', async function () {
-        setIntellisenseTimeout(30000);
         const { editor } = await openNotebook(ipynbFile);
         await waitForKernelToGetAutoSelected(editor, PYTHON_LANGUAGE);
-        let nbEditor = vscodeNotebook.activeNotebookEditor!;
+        let nbEditor = window.activeNotebookEditor!;
         assert.isOk(nbEditor, 'No active notebook');
         // Cell 1 = `a = "Hello World"`
         // Cell 2 = `print(a)`

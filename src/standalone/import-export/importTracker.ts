@@ -8,11 +8,12 @@ import {
     NotebookCellKind,
     NotebookDocument,
     TextDocument,
-    Uri
+    Uri,
+    notebooks,
+    workspace
 } from 'vscode';
 import { ResourceTypeTelemetryProperty, sendTelemetryEvent } from '../../telemetry';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
-import { IVSCodeNotebook, IWorkspaceService } from '../../platform/common/application/types';
 import { isCI, isTestExecution, JupyterNotebookView, PYTHON_LANGUAGE } from '../../platform/common/constants';
 import { dispose } from '../../platform/common/utils/lifecycle';
 import { IDisposable, IDisposableRegistry } from '../../platform/common/types';
@@ -20,8 +21,8 @@ import { noop } from '../../platform/common/utils/misc';
 import { EventName } from '../../platform/telemetry/constants';
 import { getTelemetrySafeHashedString } from '../../platform/telemetry/helpers';
 import { isJupyterNotebook } from '../../platform/common/utils';
-import { ResourceMap } from '../../platform/vscode-path/map';
 import { isTelemetryDisabled } from '../../telemetry';
+import { ResourceMap } from '../../platform/common/utils/map';
 
 /*
 Python has a fairly rich import statement. Originally the matching regexp was kept simple for
@@ -64,27 +65,23 @@ export class ImportTracker implements IExtensionSyncActivationService, IDisposab
     private disposables: IDisposable[] = [];
     private sentMatches = new Set<string>();
     private get isTelemetryDisabled() {
-        return isTelemetryDisabled(this.workspace);
+        return isTelemetryDisabled();
     }
-    constructor(
-        @inject(IVSCodeNotebook) private vscNotebook: IVSCodeNotebook,
-        @inject(IDisposableRegistry) disposables: IDisposableRegistry,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService
-    ) {
+    constructor(@inject(IDisposableRegistry) disposables: IDisposableRegistry) {
         disposables.push(this);
-        this.vscNotebook.onDidOpenNotebookDocument(
+        workspace.onDidOpenNotebookDocument(
             (t) => this.onOpenedOrClosedNotebookDocument(t, 'onOpenCloseOrSave'),
             this.disposables
         );
-        this.vscNotebook.onDidCloseNotebookDocument(
+        workspace.onDidCloseNotebookDocument(
             (t) => this.onOpenedOrClosedNotebookDocument(t, 'onOpenCloseOrSave'),
             this.disposables
         );
-        this.vscNotebook.onDidSaveNotebookDocument(
+        workspace.onDidSaveNotebookDocument(
             (t) => this.onOpenedOrClosedNotebookDocument(t, 'onOpenCloseOrSave'),
             this.disposables
         );
-        this.vscNotebook.onDidChangeNotebookCellExecutionState(
+        notebooks.onDidChangeNotebookCellExecutionState(
             (e) => {
                 if (e.state == NotebookCellExecutionState.Pending && !this.isTelemetryDisabled) {
                     this.checkNotebookCell(e.cell, 'onExecution').catch(noop);
@@ -101,7 +98,7 @@ export class ImportTracker implements IExtensionSyncActivationService, IDisposab
     }
 
     public activate() {
-        this.vscNotebook.notebookDocuments.forEach((e) => this.checkNotebookDocument(e, 'onOpenCloseOrSave'));
+        workspace.notebookDocuments.forEach((e) => this.checkNotebookDocument(e, 'onOpenCloseOrSave'));
     }
 
     private getDocumentLines(document: TextDocument): string[] {

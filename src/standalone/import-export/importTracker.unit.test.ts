@@ -4,7 +4,7 @@
 /* eslint-disable , , @typescript-eslint/no-explicit-any, no-multi-str, no-trailing-spaces */
 import * as sinon from 'sinon';
 import { assert, expect } from 'chai';
-import { instance, mock, when } from 'ts-mockito';
+import { when } from 'ts-mockito';
 import {
     EventEmitter,
     NotebookCellExecutionState,
@@ -13,7 +13,6 @@ import {
     NotebookDocument
 } from 'vscode';
 
-import { IVSCodeNotebook, IWorkspaceService } from '../../platform/common/application/types';
 import {
     InteractiveWindowView,
     isTestExecution,
@@ -30,6 +29,7 @@ import { ImportTracker } from './importTracker';
 import { ResourceTypeTelemetryProperty, getTelemetryReporter } from '../../telemetry';
 import { waitForCondition } from '../../test/common';
 import { createMockedNotebookDocument } from '../../test/datascience/editor-integration/helpers';
+import { mockedVSCodeNamespaces } from '../../test/vscode-mock';
 
 suite('Import Tracker', async () => {
     const oldValueOfVSC_JUPYTER_UNIT_TEST = isUnitTestExecution();
@@ -39,7 +39,6 @@ suite('Import Tracker', async () => {
     let onDidOpenNbEvent: EventEmitter<NotebookDocument>;
     let onDidCloseNbEvent: EventEmitter<NotebookDocument>;
     let onDidSaveNbEvent: EventEmitter<NotebookDocument>;
-    let vscNb: IVSCodeNotebook;
     let pandasHash: string;
     let elephasHash: string;
     let kerasHash: string;
@@ -122,7 +121,6 @@ suite('Import Tracker', async () => {
         setTestExecution(false);
         setUnitTestExecution(false);
 
-        vscNb = mock<IVSCodeNotebook>();
         onDidOpenNbEvent = new EventEmitter<NotebookDocument>();
         onDidCloseNbEvent = new EventEmitter<NotebookDocument>();
         onDidSaveNbEvent = new EventEmitter<NotebookDocument>();
@@ -130,13 +128,14 @@ suite('Import Tracker', async () => {
         disposables.push(onDidOpenNbEvent);
         disposables.push(onDidCloseNbEvent);
         disposables.push(onDidSaveNbEvent);
-        when(vscNb.onDidOpenNotebookDocument).thenReturn(onDidOpenNbEvent.event);
-        when(vscNb.onDidCloseNotebookDocument).thenReturn(onDidCloseNbEvent.event);
-        when(vscNb.onDidSaveNotebookDocument).thenReturn(onDidSaveNbEvent.event);
-        when(vscNb.onDidChangeNotebookCellExecutionState).thenReturn(onDidChangeNotebookCellExecutionState.event);
-        when(vscNb.notebookDocuments).thenReturn([]);
-        const workspace = mock<IWorkspaceService>();
-        when(workspace.getConfiguration('telemetry')).thenReturn({
+        when(mockedVSCodeNamespaces.workspace.onDidOpenNotebookDocument).thenReturn(onDidOpenNbEvent.event);
+        when(mockedVSCodeNamespaces.workspace.onDidCloseNotebookDocument).thenReturn(onDidCloseNbEvent.event);
+        when(mockedVSCodeNamespaces.workspace.onDidSaveNotebookDocument).thenReturn(onDidSaveNbEvent.event);
+        when(mockedVSCodeNamespaces.notebooks.onDidChangeNotebookCellExecutionState).thenReturn(
+            onDidChangeNotebookCellExecutionState.event
+        );
+        when(mockedVSCodeNamespaces.workspace.notebookDocuments).thenReturn([]);
+        when(mockedVSCodeNamespaces.workspace.getConfiguration('telemetry')).thenReturn({
             inspect: () => {
                 return {
                     key: 'enableTelemetry',
@@ -144,7 +143,7 @@ suite('Import Tracker', async () => {
                 };
             }
         } as any);
-        importTracker = new ImportTracker(instance(vscNb), disposables, instance(workspace));
+        importTracker = new ImportTracker(disposables);
     });
     teardown(() => {
         sinon.restore();
@@ -181,7 +180,7 @@ suite('Import Tracker', async () => {
     test('Already opened documents', async () => {
         const code = `import pandas\r\n`;
         const nb = createMockedNotebookDocument([{ kind: NotebookCellKind.Code, languageId: 'python', value: code }]);
-        when(vscNb.notebookDocuments).thenReturn([nb]);
+        when(mockedVSCodeNamespaces.workspace.notebookDocuments).thenReturn([nb]);
 
         await importTracker.activate();
 
@@ -198,7 +197,7 @@ suite('Import Tracker', async () => {
             undefined,
             notebookType
         );
-        when(vscNb.notebookDocuments).thenReturn([nb]);
+        when(mockedVSCodeNamespaces.workspace.notebookDocuments).thenReturn([nb]);
 
         await importTracker.activate();
 

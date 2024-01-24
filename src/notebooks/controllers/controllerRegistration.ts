@@ -2,26 +2,18 @@
 // Licensed under the MIT License.
 
 import { inject, injectable } from 'inversify';
-import { Event, EventEmitter, NotebookDocument } from 'vscode';
+import { Event, EventEmitter, NotebookDocument, workspace } from 'vscode';
 import { IContributedKernelFinder } from '../../kernels/internalTypes';
 import { IJupyterServerUriStorage, JupyterServerProviderHandle } from '../../kernels/jupyter/types';
 import { IKernelFinder, IKernelProvider, isRemoteConnection, KernelConnectionMetadata } from '../../kernels/types';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
 import { IPythonExtensionChecker } from '../../platform/api/types';
-import {
-    IVSCodeNotebook,
-    ICommandManager,
-    IWorkspaceService,
-    IDocumentManager,
-    IApplicationShell
-} from '../../platform/common/application/types';
 import { isCancellationError } from '../../platform/common/cancellation';
-import { isCI, JupyterNotebookView, InteractiveWindowView } from '../../platform/common/constants';
+import { isCI, JupyterNotebookView, InteractiveWindowView, Identifiers } from '../../platform/common/constants';
 import {
     IDisposableRegistry,
     IConfigurationService,
     IExtensionContext,
-    IBrowserService,
     IDisposable
 } from '../../platform/common/types';
 import { noop } from '../../platform/common/utils/misc';
@@ -38,6 +30,7 @@ import {
     IVSCodeNotebookControllerUpdateEvent
 } from './types';
 import { VSCodeNotebookController } from './vscodeNotebookController';
+import { IJupyterVariables } from '../../kernels/variables/types';
 
 /**
  * Keeps track of registered controllers and available KernelConnectionMetadatas.
@@ -83,10 +76,8 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
     }>();
     private selectedControllers = new Map<string, IVSCodeNotebookController>();
     constructor(
-        @inject(IVSCodeNotebook) private readonly notebook: IVSCodeNotebook,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
         @inject(PythonEnvironmentFilter) private readonly pythonEnvFilter: PythonEnvironmentFilter,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
         @inject(IPythonExtensionChecker) private readonly extensionChecker: IPythonExtensionChecker,
         @inject(IServiceContainer) private readonly serviceContainer: IServiceContainer,
         @inject(IJupyterServerUriStorage) private readonly serverUriStorage: IJupyterServerUriStorage,
@@ -132,9 +123,9 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
             this.disposables
         );
         // Sign up for document either opening or closing
-        this.notebook.onDidOpenNotebookDocument(this.onDidOpenNotebookDocument, this, this.disposables);
+        workspace.onDidOpenNotebookDocument(this.onDidOpenNotebookDocument, this, this.disposables);
         // If the extension activates after installing Jupyter extension, then ensure we load controllers right now.
-        this.notebook.notebookDocuments.forEach((notebook) => this.onDidOpenNotebookDocument(notebook).catch(noop));
+        workspace.notebookDocuments.forEach((notebook) => this.onDidOpenNotebookDocument(notebook).catch(noop));
 
         this.loadControllers();
     }
@@ -151,7 +142,7 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
         // Restrict to only our notebook documents
         if (
             (document.notebookType !== JupyterNotebookView && document.notebookType !== InteractiveWindowView) ||
-            !this.workspace.isTrusted
+            !workspace.isTrusted
         ) {
             return;
         }
@@ -361,20 +352,15 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
                         metadata,
                         id,
                         viewType,
-                        this.notebook,
-                        this.serviceContainer.get<ICommandManager>(ICommandManager),
                         this.serviceContainer.get<IKernelProvider>(IKernelProvider),
                         this.serviceContainer.get<IExtensionContext>(IExtensionContext),
                         this.disposables,
                         this.serviceContainer.get<NotebookCellLanguageService>(NotebookCellLanguageService),
-                        this.workspace,
                         this.serviceContainer.get<IConfigurationService>(IConfigurationService),
-                        this.serviceContainer.get<IDocumentManager>(IDocumentManager),
-                        this.serviceContainer.get<IApplicationShell>(IApplicationShell),
-                        this.serviceContainer.get<IBrowserService>(IBrowserService),
                         this.extensionChecker,
                         this.serviceContainer,
-                        this.serviceContainer.get<IConnectionDisplayDataProvider>(IConnectionDisplayDataProvider)
+                        this.serviceContainer.get<IConnectionDisplayDataProvider>(IConnectionDisplayDataProvider),
+                        this.serviceContainer.get<IJupyterVariables>(IJupyterVariables, Identifiers.KERNEL_VARIABLES)
                     );
                     // Hook up to if this NotebookController is selected or de-selected
                     const controllerDisposables: IDisposable[] = [];
@@ -445,6 +431,6 @@ export class ControllerRegistration implements IControllerRegistration, IExtensi
     }
 
     private isControllerAttachedToADocument(controller: IVSCodeNotebookController) {
-        return this.notebook.notebookDocuments.some((doc) => controller.isAssociatedWithDocument(doc));
+        return workspace.notebookDocuments.some((doc) => controller.isAssociatedWithDocument(doc));
     }
 }

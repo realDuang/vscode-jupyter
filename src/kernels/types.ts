@@ -6,8 +6,10 @@ import type {
     CancellationToken,
     Disposable,
     Event,
+    EventEmitter,
     NotebookCell,
     NotebookCellExecution,
+    NotebookCellOutput,
     NotebookDocument,
     Uri
 } from 'vscode';
@@ -31,18 +33,12 @@ import {
 } from '../platform/common/constants';
 import { sendTelemetryEvent } from '../telemetry';
 import { generateIdFromRemoteProvider } from './jupyter/jupyterUtils';
-import { ICodeExecution } from './execution/types';
+import { traceInfoIfCI } from '../platform/logging';
 
 export type WebSocketData = string | Buffer | ArrayBuffer | Buffer[];
 
 export type LiveKernelModel = IJupyterKernel &
     Partial<IJupyterKernelSpec> & { model: Session.IModel | undefined; notebook?: { path?: string } };
-
-export enum NotebookCellRunState {
-    Idle = 'Idle',
-    Success = 'Success',
-    Error = 'Error'
-}
 
 async function getConnectionIdHash(connection: KernelConnectionMetadata) {
     if (!isWeb() && connection.interpreter?.uri) {
@@ -291,6 +287,13 @@ export class PythonKernelConnectionMetadata {
         };
     }
     public updateInterpreter(interpreter: PythonEnvironment) {
+        if (!interpreter.sysPrefix) {
+            traceInfoIfCI(
+                `WARNING: Interpreter ${interpreter.id} has no sysPrefix and existing item ${
+                    this.interpreter.sysPrefix
+                } will be blown away, ${new Error().stack}`
+            );
+        }
         Object.assign(this.interpreter, interpreter);
     }
     public static fromJSON(options: Record<string, unknown> | PythonKernelConnectionMetadata) {
@@ -446,16 +449,24 @@ export interface INotebookKernelExecution {
      * @param cell Cell to execute
      * @param codeOverride Override the code to execute
      */
-    executeCell(cell: NotebookCell, codeOverride?: string): Promise<NotebookCellRunState>;
+    executeCell(cell: NotebookCell, codeOverride?: string): Promise<void>;
     /**
      * Executes 3rd party code against the kernel.
      */
-    executeCode(code: string, extensionId: string, token: CancellationToken): Promise<ICodeExecution>;
+    executeCode(
+        code: string,
+        extensionId: string,
+        events: {
+            started: EventEmitter<void>;
+            executionAcknowledged: EventEmitter<void>;
+        },
+        token: CancellationToken
+    ): AsyncGenerator<NotebookCellOutput, void, unknown>;
     /**
      * Given the cell execution message Id and the like , this will resume the execution of a cell from a detached state.
      * E.g. assume user re-loads VS Code, we need to resume the execution of the cell.
      */
-    resumeCellExecution(cell: NotebookCell, info: ResumeCellExecutionInformation): Promise<NotebookCellRunState>;
+    resumeCellExecution(cell: NotebookCell, info: ResumeCellExecutionInformation): Promise<void>;
     /**
      * Executes arbitrary code against the kernel without incrementing the execution count.
      */
@@ -559,16 +570,13 @@ export interface IJupyterConnection extends Disposable {
      */
     readonly rootDirectory: Uri;
     getAuthHeader?(): Record<string, string>;
-    /**
-     * Returns the sub-protocols to be used. See details of `protocols` here https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/WebSocket
-     */
-    getWebsocketProtocols?(): string[];
 }
 
 export enum InterruptResult {
     Success = 'success',
     TimedOut = 'timeout',
-    Restarted = 'restart'
+    Restarted = 'restart',
+    Dead = 'dead'
 }
 
 /**
@@ -872,10 +880,8 @@ export interface IStartupCodeProvider {
 }
 
 export interface IKernelSettings {
-    enableExtendedKernelCompletions: boolean;
+    enableExtendedPythonKernelCompletions: boolean;
     themeMatplotlibPlots: boolean;
-    ignoreVscodeTheme: boolean;
-    generateSVGPlots: boolean;
     launchTimeout: number;
     interruptTimeout: number;
     runStartupCommands: string | string[];

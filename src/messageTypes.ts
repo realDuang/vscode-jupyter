@@ -21,7 +21,6 @@ export interface ILoadIPyWidgetClassFailureAction {
     className: string;
     moduleName: string;
     moduleVersion: string;
-    cdnsUsed: boolean;
     isOnline: boolean;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     error: any;
@@ -63,6 +62,8 @@ export enum InteractiveWindowMessages {
 }
 
 export enum IPyWidgetMessages {
+    IPyWidgets_Window_Alert = 'IPyWidgets_Window_Alert',
+    IPyWidgets_Window_Open = 'IPyWidgets_Window_Open',
     IPyWidgets_logMessage = 'IPyWidgets_logMessage',
     IPyWidgets_IsReadyRequest = 'IPyWidgets_IsReadyRequest',
     IPyWidgets_AttemptToDownloadFailedWidgetsAgain = 'IPyWidgets_AttemptToDownloadFailedWidgetsAgain',

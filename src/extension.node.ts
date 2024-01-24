@@ -42,7 +42,6 @@ import {
     workspace
 } from 'vscode';
 import { buildApi, IExtensionApi } from './standalone/api/api';
-import { IApplicationEnvironment, ICommandManager } from './platform/common/application/types';
 import { setHomeDirectory, traceError } from './platform/logging';
 import {
     GLOBAL_MEMENTO,
@@ -54,9 +53,7 @@ import {
     IFeaturesManager,
     IMemento,
     IOutputChannel,
-    IsCodeSpace,
     IsDevMode,
-    IsWebExtension,
     WORKSPACE_MEMENTO
 } from './platform/common/types';
 import { createDeferred } from './platform/common/utils/async';
@@ -78,7 +75,10 @@ import {
     JUPYTER_OUTPUT_CHANNEL,
     PylanceExtension,
     PythonExtension,
-    STANDARD_OUTPUT_CHANNEL
+    setIsCodeSpace,
+    setIsWebExtension,
+    STANDARD_OUTPUT_CHANNEL,
+    Telemetry
 } from './platform/common/constants';
 import { getDisplayPath } from './platform/common/platform/fs-paths';
 import { getJupyterOutputChannel } from './standalone/devTools/jupyterOutputChannel';
@@ -97,6 +97,9 @@ import {
     activate as activateExecutionAnalysis,
     deactivate as deactivateExecutionAnalysis
 } from './standalone/executionAnalysis/extension';
+import { setDisposableTracker } from './platform/common/utils/lifecycle';
+import { sendTelemetryEvent } from './telemetry';
+import { getVSCodeChannel } from './platform/common/application/applicationEnvironment';
 
 durations.codeLoadingTime = stopWatch.elapsedTime;
 
@@ -110,15 +113,17 @@ let activatedServiceContainer: IServiceContainer | undefined;
 // public functions
 
 export async function activate(context: IExtensionContext): Promise<IExtensionApi> {
+    setDisposableTracker(context.subscriptions);
+    setIsCodeSpace(env.uiKind == UIKind.Web);
+    setIsWebExtension(false);
     context.subscriptions.push({ dispose: () => (Exiting.isExiting = true) });
     try {
         let api: IExtensionApi;
         let ready: Promise<void>;
-        let serviceContainer: IServiceContainer;
-        [api, ready, serviceContainer] = await activateUnsafe(context, stopWatch, durations);
+        [api, ready] = await activateUnsafe(context, stopWatch, durations);
         // Send the "success" telemetry only if activation did not fail.
         // Otherwise Telemetry is send via the error handler.
-        sendStartupTelemetry(ready, durations, stopWatch, serviceContainer)
+        sendStartupTelemetry(ready, durations, stopWatch)
             // Run in the background.
             .catch(noop);
         await ready;
@@ -140,7 +145,7 @@ export async function activate(context: IExtensionContext): Promise<IExtensionAp
             createJupyterServerCollection: () => {
                 throw new Error('Not Implemented');
             },
-            kernels: { findKernel: () => Promise.resolve(undefined) }
+            kernels: { getKernel: () => Promise.resolve(undefined) }
         };
     }
 }
@@ -221,7 +226,7 @@ async function handleError(ex: Error, startupDurations: typeof durations) {
     // Possible logger hasn't initialized either.
     console.error('extension activation failed', ex);
     traceError('extension activation failed', ex);
-    await sendErrorTelemetry(ex, startupDurations, activatedServiceContainer);
+    await sendErrorTelemetry(ex, startupDurations);
 }
 
 function notifyUser(msg: string) {
@@ -288,7 +293,6 @@ function addOutputChannel(context: IExtensionContext, serviceManager: IServiceMa
         getJupyterOutputChannel(context.subscriptions),
         JUPYTER_OUTPUT_CHANNEL
     );
-    serviceManager.addSingletonInstance<boolean>(IsCodeSpace, env.uiKind == UIKind.Web);
 
     // Log env info.
     standardOutputChannel.appendLine(`${env.appName} (${version}, ${env.remoteName}, ${env.appHost})`);
@@ -342,7 +346,6 @@ async function activateLegacy(
         (context.extensionMode === ExtensionMode.Development ||
             workspace.getConfiguration('jupyter').get<boolean>('development', false));
     serviceManager.addSingletonInstance<boolean>(IsDevMode, isDevMode);
-    serviceManager.addSingletonInstance<boolean>(IsWebExtension, false);
     if (isDevMode) {
         commands.executeCommand('setContext', 'jupyter.development', true).then(noop, noop);
     }
@@ -368,9 +371,10 @@ async function activateLegacy(
     // Await here to keep the register method sync
     const experimentService = serviceContainer.get<IExperimentService>(IExperimentService);
     // This must be done first, this guarantees all experiment information has loaded & all telemetry will contain experiment info.
+    const stopWatch = new StopWatch();
     await experimentService.activate();
-
-    const applicationEnv = serviceManager.get<IApplicationEnvironment>(IApplicationEnvironment);
+    const duration = stopWatch.elapsedTime;
+    sendTelemetryEvent(Telemetry.ExperimentLoad, { duration });
     const configuration = serviceManager.get<IConfigurationService>(IConfigurationService);
 
     // We should start logging using the log level as soon as possible, so set it as soon as we can access the level.
@@ -383,8 +387,7 @@ async function activateLegacy(
     });
 
     // "initialize" "services"
-    const cmdManager = serviceContainer.get<ICommandManager>(ICommandManager);
-    cmdManager.executeCommand('setContext', 'jupyter.vscode.channel', applicationEnv.channel).then(noop, noop);
+    commands.executeCommand('setContext', 'jupyter.vscode.channel', getVSCodeChannel()).then(noop, noop);
 
     // "activate" everything else
     serviceContainer.get<IExtensionActivationManager>(IExtensionActivationManager).activate();

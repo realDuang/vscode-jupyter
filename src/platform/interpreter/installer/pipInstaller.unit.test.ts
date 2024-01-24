@@ -13,11 +13,11 @@ import { anything, capture, deepEqual, instance, mock, verify, when } from 'ts-m
 import { Product } from '../../../platform/interpreter/installer/types';
 import { IDisposable } from '../../../platform/common/types';
 import { dispose } from '../../../platform/common/utils/lifecycle';
-import { IApplicationShell, IWorkspaceService } from '../../../platform/common/application/types';
 import { ChildProcess } from 'child_process';
 import { IPythonExecutionFactory, IPythonExecutionService } from '../../../platform/interpreter/types.node';
 import { noop } from '../../../test/core';
 import { createObservable } from '../../common/process/proc.node';
+import { mockedVSCodeNamespaces } from '../../../test/vscode-mock';
 
 suite('Pip installer', async () => {
     let serviceContainer: IServiceContainer;
@@ -40,18 +40,14 @@ suite('Pip installer', async () => {
             instance(pythonExecutionService)
         );
 
-        const workspace = mock<IWorkspaceService>();
-        when(serviceContainer.get<IWorkspaceService>(IWorkspaceService)).thenReturn(instance(workspace));
         const workspaceConfig = mock<WorkspaceConfiguration>();
-        const appShell = mock<IApplicationShell>();
-        when(serviceContainer.get<IApplicationShell>(IApplicationShell)).thenReturn(instance(appShell));
         const cancellation = new CancellationTokenSource();
         disposables.push(cancellation);
         const progress = mock<any>();
-        when(appShell.withProgress(anything(), anything())).thenCall((_, cb) =>
+        when(mockedVSCodeNamespaces.window.withProgress(anything(), anything())).thenCall((_, cb) =>
             cb(instance(progress), cancellation.token)
         );
-        when(workspace.getConfiguration('http')).thenReturn(instance(workspaceConfig));
+        when(mockedVSCodeNamespaces.workspace.getConfiguration('http')).thenReturn(instance(workspaceConfig));
         when(workspaceConfig.get('proxy', '')).thenReturn('');
 
         proc = mock<ChildProcess>();

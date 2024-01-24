@@ -4,11 +4,8 @@
 /* eslint-disable , , @typescript-eslint/no-explicit-any */
 import * as sinon from 'sinon';
 import { expect } from 'chai';
-import * as TypeMoq from 'typemoq';
-import { instance, mock, verify, when } from 'ts-mockito';
-import { WorkspaceConfiguration } from 'vscode';
-import { IWorkspaceService } from '../common/application/types';
-import { WorkspaceService } from '../common/application/workspace.node';
+import { instance, mock, reset, verify, when } from 'ts-mockito';
+import { Disposable, WorkspaceConfiguration } from 'vscode';
 import { EXTENSION_ROOT_DIR } from '../constants.node';
 import {
     _resetSharedProperties,
@@ -20,9 +17,11 @@ import {
 import { isUnitTestExecution, isTestExecution, setTestExecution, setUnitTestExecution } from '../common/constants';
 import { sleep } from '../../test/core';
 import { waitForCondition } from '../../test/common';
+import { mockedVSCodeNamespaces, resetVSCodeMocks } from '../../test/vscode-mock';
+import { IDisposable } from '../common/types';
+import { dispose } from '../common/utils/lifecycle';
 
 suite('Telemetry', () => {
-    let workspaceService: IWorkspaceService;
     const oldValueOfVSC_JUPYTER_UNIT_TEST = isUnitTestExecution();
     const oldValueOfVSC_JUPYTER_CI_TEST = isTestExecution();
 
@@ -58,20 +57,23 @@ suite('Telemetry', () => {
         expect(Reporter.measures).to.deep.equal(expectedMeasures);
         expect(Reporter.properties).to.deep.equal(expectedProperties);
     }
-
+    let disposables: IDisposable[] = [];
     setup(() => {
+        resetVSCodeMocks();
+        disposables.push(new Disposable(() => resetVSCodeMocks()));
+
         const reporter = getTelemetryReporter();
         sinon.stub(reporter, 'sendTelemetryEvent').callsFake((eventName: string, properties?: {}, measures?: {}) => {
             Reporter.eventName.push(eventName);
             Reporter.properties.push(properties!);
             Reporter.measures.push(measures!);
         });
-        workspaceService = mock(WorkspaceService);
         setTestExecution(false);
         setUnitTestExecution(false);
         Reporter.clear();
     });
     teardown(() => {
+        disposables = dispose(disposables);
         sinon.restore();
         setUnitTestExecution(oldValueOfVSC_JUPYTER_UNIT_TEST);
         setTestExecution(oldValueOfVSC_JUPYTER_CI_TEST);
@@ -94,17 +96,16 @@ suite('Telemetry', () => {
     suite('Function isTelemetryDisabled()', () => {
         testsForisTelemetryDisabled.forEach((testParams) => {
             test(testParams.testName, async () => {
-                const workspaceConfig = TypeMoq.Mock.ofType<WorkspaceConfiguration>();
-                when(workspaceService.getConfiguration('telemetry')).thenReturn(workspaceConfig.object);
-                workspaceConfig
-                    .setup((c) => c.inspect<string>('enableTelemetry'))
-                    .returns(() => testParams.settings as any)
-                    .verifiable(TypeMoq.Times.once());
+                const workspaceConfig = mock<WorkspaceConfiguration>();
+                reset(mockedVSCodeNamespaces.workspace);
+                when(mockedVSCodeNamespaces.workspace.getConfiguration('telemetry')).thenReturn(
+                    instance(workspaceConfig)
+                );
+                when(workspaceConfig.inspect<string>('enableTelemetry')).thenReturn(testParams.settings as any);
 
-                expect(isTelemetryDisabled(instance(workspaceService))).to.equal(testParams.expectedResult);
+                expect(isTelemetryDisabled()).to.equal(testParams.expectedResult);
 
-                verify(workspaceService.getConfiguration('telemetry')).once();
-                workspaceConfig.verifyAll();
+                verify(mockedVSCodeNamespaces.workspace.getConfiguration('telemetry')).once();
             });
         });
     });

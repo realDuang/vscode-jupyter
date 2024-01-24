@@ -17,14 +17,8 @@ import {
     Uri
 } from 'vscode';
 
-import { instance, mock, when } from 'ts-mockito';
-import {
-    ICommandManager,
-    IDebugService,
-    IDocumentManager,
-    IVSCodeNotebook,
-    IWorkspaceService
-} from '../../platform/common/application/types';
+import { anything, instance, mock, when } from 'ts-mockito';
+import { IDebugService } from '../../platform/common/application/types';
 import { IFileSystem } from '../../platform/common/platform/types';
 import { IConfigurationService } from '../../platform/common/types';
 import { CodeLensFactory } from './codeLensFactory';
@@ -46,14 +40,11 @@ import { MockDocumentManager } from '../../test/datascience/mockDocumentManager'
 import { MockJupyterSettings } from '../../test/datascience/mockJupyterSettings';
 import { MockEditor } from '../../test/datascience/mockTextEditor';
 import { noop } from '../../test/core';
+import { mockedVSCodeNamespaces } from '../../test/vscode-mock';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-function initializeMockTextEditor(
-    codeWatcher: CodeWatcher,
-    documentManager: TypeMoq.IMock<IDocumentManager>,
-    inputText: string
-): MockEditor {
+function initializeMockTextEditor(codeWatcher: CodeWatcher, inputText: string): MockEditor {
     const fileName = Uri.file('test.py').fsPath;
     const version = 1;
     const document = createDocument(inputText, fileName, version, TypeMoq.Times.atLeastOnce(), true);
@@ -64,8 +55,7 @@ function initializeMockTextEditor(
     const mockDocumentManager = new MockDocumentManager();
     const mockDocument = mockDocumentManager.addDocument(inputText, fileName);
     const mockTextEditor = new MockEditor(mockDocumentManager, mockDocument);
-    documentManager.reset();
-    documentManager.setup((dm) => dm.activeTextEditor).returns(() => mockTextEditor);
+    when(mockedVSCodeNamespaces.window.activeTextEditor).thenReturn(mockTextEditor);
     mockTextEditor.selection = new Selection(0, 0, 0, 0);
     return mockTextEditor;
 }
@@ -74,8 +64,6 @@ suite('Code Watcher Unit Tests', () => {
     let codeWatcher: CodeWatcher;
     let interactiveWindowProvider: TypeMoq.IMock<IInteractiveWindowProvider>;
     let activeInteractiveWindow: TypeMoq.IMock<IInteractiveWindow>;
-    let documentManager: TypeMoq.IMock<IDocumentManager>;
-    let commandManager: TypeMoq.IMock<ICommandManager>;
     let textEditor: TypeMoq.IMock<TextEditor>;
     let fileSystem: TypeMoq.IMock<IFileSystem>;
     let configService: TypeMoq.IMock<IConfigurationService>;
@@ -93,35 +81,28 @@ suite('Code Watcher Unit Tests', () => {
         tokenSource = new CancellationTokenSource();
         interactiveWindowProvider = TypeMoq.Mock.ofType<IInteractiveWindowProvider>();
         activeInteractiveWindow = createTypeMoq<IInteractiveWindow>('history');
-        documentManager = TypeMoq.Mock.ofType<IDocumentManager>();
         textEditor = TypeMoq.Mock.ofType<TextEditor>();
         fileSystem = TypeMoq.Mock.ofType<IFileSystem>();
         configService = TypeMoq.Mock.ofType<IConfigurationService>();
         debugLocationTracker = TypeMoq.Mock.ofType<IDebugLocationTracker>();
         helper = TypeMoq.Mock.ofType<ICodeExecutionHelper>();
-        commandManager = TypeMoq.Mock.ofType<ICommandManager>();
         debugService = TypeMoq.Mock.ofType<IDebugService>();
-        const workspace = mock<IWorkspaceService>();
-
         // Setup default settings
-        jupyterSettings = new MockJupyterSettings(undefined, SystemVariables, 'node', instance(workspace));
+        jupyterSettings = new MockJupyterSettings(undefined, SystemVariables, 'node');
         jupyterSettings.assign({
             jupyterLaunchTimeout: 20000,
             jupyterLaunchRetries: 3,
             notebookFileRoot: 'WORKSPACE',
             useDefaultConfigForJupyter: true,
             jupyterInterruptTimeout: 10000,
-            searchForJupyter: true,
             errorBackgroundColor: '#FFFFFF',
             sendSelectionToInteractiveWindow: false,
             variableExplorerExclude: 'module;function;builtin_function_or_method',
             codeRegularExpression: '^(#\\s*%%|#\\s*\\<codecell\\>|#\\s*In\\[\\d*?\\]|#\\s*In\\[ \\])',
             markdownRegularExpression: '^(#\\s*%%\\s*\\[markdown\\]|#\\s*\\<markdowncell\\>)',
             enableCellCodeLens: true,
-            generateSVGPlots: false,
             runStartupCommands: [],
             debugJustMyCode: true,
-            variableQueries: [],
             widgetScriptSources: [],
             interactiveWindowMode: 'single',
             newCellOnRunLast: true
@@ -137,12 +118,13 @@ suite('Code Watcher Unit Tests', () => {
         // Setup config service
         configService.setup((c) => c.getSettings(TypeMoq.It.isAny())).returns(() => jupyterSettings);
 
-        when(workspace.isTrusted).thenReturn(true);
+        when(mockedVSCodeNamespaces.workspace.isTrusted).thenReturn(true);
         const trustedEvent = new EventEmitter<void>();
-        when(workspace.onDidGrantWorkspaceTrust).thenReturn(trustedEvent.event);
-        const notebook = mock<IVSCodeNotebook>();
+        when(mockedVSCodeNamespaces.workspace.onDidGrantWorkspaceTrust).thenReturn(trustedEvent.event);
         const execStateChangeEvent = new EventEmitter<NotebookCellExecutionStateChangeEvent>();
-        when(notebook.onDidChangeNotebookCellExecutionState).thenReturn(execStateChangeEvent.event);
+        when(mockedVSCodeNamespaces.notebooks.onDidChangeNotebookCellExecutionState).thenReturn(
+            execStateChangeEvent.event
+        );
         const storageFactory = mock<IGeneratedCodeStorageFactory>();
         const kernelProvider = mock<IKernelProvider>();
         const kernelDisposedEvent = new EventEmitter<IKernel>();
@@ -152,9 +134,6 @@ suite('Code Watcher Unit Tests', () => {
         disposables.push(kernelDisposedEvent);
         const codeLensFactory = new CodeLensFactory(
             configService.object,
-            documentManager.object,
-            instance(workspace),
-            instance(notebook),
             disposables,
             instance(storageFactory),
             instance(kernelProvider)
@@ -166,7 +145,6 @@ suite('Code Watcher Unit Tests', () => {
                     new CodeWatcher(
                         interactiveWindowProvider.object,
                         configService.object,
-                        documentManager.object,
                         helper.object,
                         dataScienceErrorHandler.object,
                         codeLensFactory
@@ -182,21 +160,18 @@ suite('Code Watcher Unit Tests', () => {
             .returns(() => Promise.resolve(activeInteractiveWindow.object));
 
         // Setup our active text editor
-        documentManager.setup((dm) => dm.activeTextEditor).returns(() => textEditor.object);
+        when(mockedVSCodeNamespaces.window.activeTextEditor).thenReturn(textEditor.object);
 
-        commandManager
-            .setup((c) => c.executeCommand(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
-            .returns((c, n, v) => {
-                if (c === 'setContext') {
-                    contexts.set(n, v);
-                }
-                return Promise.resolve();
-            });
+        when(mockedVSCodeNamespaces.commands.executeCommand(anything(), anything(), anything())).thenCall((c, n, v) => {
+            if (c === 'setContext') {
+                contexts.set(n, v);
+            }
+            return Promise.resolve();
+        });
 
         codeWatcher = new CodeWatcher(
             interactiveWindowProvider.object,
             configService.object,
-            documentManager.object,
             helper.object,
             dataScienceErrorHandler.object,
             codeLensFactory
@@ -1051,20 +1026,16 @@ testing1
         const inputText = '#%% foobar';
         const document = createDocument(inputText, fileName.fsPath, version, TypeMoq.Times.atLeastOnce());
         document.setup((doc) => doc.getText()).returns(() => inputText);
-        documentManager.setup((d) => d.textDocuments).returns(() => [document.object]);
-        const workspace = mock<IWorkspaceService>();
-        when(workspace.isTrusted).thenReturn(true);
-        when(workspace.onDidGrantWorkspaceTrust).thenReturn(new EventEmitter<void>().event);
+        when(mockedVSCodeNamespaces.workspace.textDocuments).thenReturn([document.object]);
+        when(mockedVSCodeNamespaces.workspace.isTrusted).thenReturn(true);
+        when(mockedVSCodeNamespaces.workspace.onDidGrantWorkspaceTrust).thenReturn(new EventEmitter<void>().event);
 
         const codeLensProvider = new DataScienceCodeLensProvider(
             serviceContainer.object,
             debugLocationTracker.object,
-            documentManager.object,
             configService.object,
-            commandManager.object,
             disposables,
-            debugService.object,
-            instance(workspace)
+            debugService.object
         );
 
         let result = codeLensProvider.provideCodeLenses(document.object, tokenSource.token);
@@ -1186,7 +1157,6 @@ testing2`; // Command tests override getText, so just need the ranges here
     test('Test insert cell below position', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1214,7 +1184,6 @@ testing2`);
     test('Test insert cell below position at end', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1243,7 +1212,6 @@ testing2
     test('Test insert cell below', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1275,7 +1243,6 @@ testing2`
     test('Test insert cell below but above any cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1303,7 +1270,6 @@ testing2`);
     test('Test insert cell below selection range', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1336,7 +1302,6 @@ testing2`
     test('Test insert cell above first cell of range', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1369,7 +1334,6 @@ testing2`
     test('Test insert cell above and above cells', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1401,7 +1365,6 @@ testing2`
     test('Delete single cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1424,7 +1387,6 @@ testing2`
     test('Delete multiple cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1443,7 +1405,6 @@ testing2`
     test('Delete cell no cells in selection', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1467,7 +1428,6 @@ testing2`);
     test('Select cell single', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1489,7 +1449,6 @@ testing2`
     test('Select cell multiple', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1511,7 +1470,6 @@ testing2`
     test('Select cell multiple reversed', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1533,7 +1491,6 @@ testing2`
     test('Select cell above cells unchanged', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1555,7 +1512,6 @@ testing2`
     test('Select cell contents', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1580,7 +1536,6 @@ testing2`
     test('Select cell contents multi cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1612,7 +1567,6 @@ testing2`
     test('Select cell contents multi cell reversed', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing0
 #%%
 testing1
@@ -1644,7 +1598,6 @@ testing2`
     test('Extend selection by cell above initial select', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1669,7 +1622,6 @@ testing_L8`
     test('Extend selection by cell above initial range in cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1694,7 +1646,6 @@ testing_L8`
     test('Extend selection by cell above initial range in cell opposite direction', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1719,7 +1670,6 @@ testing_L8`
     test('Extend selection by cell above initial range below cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1744,7 +1694,6 @@ testing_L8`
     test('Extend selection by cell above initial range above cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1769,7 +1718,6 @@ testing_L8`
     test('Extend selection by cell above expand above', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1794,7 +1742,6 @@ testing_L8`
     test('Extend selection by cell above contract below', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1819,7 +1766,6 @@ testing_L8`
     test('Extend selection by cell below initial select', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1844,7 +1790,6 @@ testing_L8`
     test('Extend selection by cell below initial range in cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1869,7 +1814,6 @@ testing_L8`
     test('Extend selection by cell below initial range in cell opposite direction', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1894,7 +1838,6 @@ testing_L8`
     test('Extend selection by cell below initial range below cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1919,7 +1862,6 @@ testing_L8`
     test('Extend selection by cell below initial range above cell', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1944,7 +1886,6 @@ testing_L8`
     test('Extend selection by cell below expand below', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1969,7 +1910,6 @@ testing_L8`
     test('Extend selection by cell below contract above', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -1994,7 +1934,6 @@ testing_L8`
     test('Extend selection by cell above and below', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2026,7 +1965,6 @@ testing_L8`
     test('Move cells up', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2062,7 +2000,6 @@ testing_L8`
     test('Move cells up multiple cells', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2098,7 +2035,6 @@ testing_L3`
     test('Move cells up first cell no change', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2134,7 +2070,6 @@ testing_L8`
     test('Move cells down', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2170,7 +2105,6 @@ testing_L6`
     test('Move cells down multiple cells', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2206,7 +2140,6 @@ testing_L6`
     test('Move cells down last cell no change', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2242,7 +2175,6 @@ testing_L8`
     test('Change cell to markdown', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %%
 testing_L2
@@ -2303,7 +2235,7 @@ testing_L3
 testing_L6
 
 `;
-        const mockTextEditor = initializeMockTextEditor(codeWatcher, documentManager, text);
+        const mockTextEditor = initializeMockTextEditor(codeWatcher, text);
 
         mockTextEditor.selection = new Selection(1, 2, 5, 5);
 
@@ -2320,7 +2252,6 @@ testing_L6
     test('Change cell to code', async () => {
         const mockTextEditor = initializeMockTextEditor(
             codeWatcher,
-            documentManager,
             `testing_L0
 # %% [markdown]
 # testing_L2
@@ -2381,7 +2312,7 @@ testing_L3
 # testing_L6
 
 `;
-        const mockTextEditor = initializeMockTextEditor(codeWatcher, documentManager, text);
+        const mockTextEditor = initializeMockTextEditor(codeWatcher, text);
 
         mockTextEditor.selection = new Selection(1, 2, 5, 5);
 

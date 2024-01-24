@@ -2,13 +2,13 @@
 // Licensed under the MIT License.
 
 import type TelemetryReporter from '@vscode/extension-telemetry';
-import { IWorkspaceService } from '../common/application/types';
 import { AppinsightsKey, isTestExecution, isUnitTestExecution } from '../common/constants';
 import { traceError } from '../logging';
 import { StopWatch } from '../common/utils/stopWatch';
 import { ExcludeType, noop, PickType, UnionToIntersection } from '../common/utils/misc';
 import { populateTelemetryWithErrorInfo } from '../errors';
 import { TelemetryEventInfo, IEventNamePropertyMapping } from '../../telemetry';
+import { workspace } from 'vscode';
 
 /**
  * TODO@rebornix
@@ -40,8 +40,8 @@ function isTelemetrySupported(): boolean {
  * Checks if the telemetry is disabled in user settings
  * @returns {boolean}
  */
-export function isTelemetryDisabled(workspaceService: IWorkspaceService): boolean {
-    const settings = workspaceService.getConfiguration('telemetry').inspect<boolean>('enableTelemetry')!;
+export function isTelemetryDisabled(): boolean {
+    const settings = workspace.getConfiguration('telemetry').inspect<boolean>('enableTelemetry')!;
     return settings.globalValue === false ? true : false;
 }
 
@@ -130,6 +130,20 @@ export function sendTelemetryEvent<P extends IEventNamePropertyMapping, E extend
         ex
     );
 }
+
+export type TelemetryProperties<
+    E extends keyof P,
+    P extends IEventNamePropertyMapping = IEventNamePropertyMapping
+> = P[E] extends TelemetryEventInfo<infer R>
+    ? ExcludeType<R, number> extends never | undefined
+        ? undefined
+        : ExcludeType<R, number>
+    : undefined | undefined;
+
+export type TelemetryMeasures<
+    E extends keyof P,
+    P extends IEventNamePropertyMapping = IEventNamePropertyMapping
+> = P[E] extends TelemetryEventInfo<infer R> ? PickType<UnionToIntersection<R>, number> : undefined;
 
 function sendTelemetryEventInternal<P extends IEventNamePropertyMapping, E extends keyof P>(
     eventName: E,

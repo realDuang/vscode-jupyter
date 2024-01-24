@@ -2,9 +2,8 @@
 // Licensed under the MIT License.
 
 import { inject, injectable } from 'inversify';
-import { NotebookDocument } from 'vscode';
+import { NotebookDocument, commands, window, workspace } from 'vscode';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
-import { IVSCodeNotebook, ICommandManager } from '../../platform/common/application/types';
 import { traceVerbose, traceWarning } from '../../platform/logging';
 import { IDisposableRegistry } from '../../platform/common/types';
 import { PreferredRemoteKernelIdProvider } from '../../kernels/jupyter/connection/preferredRemoteKernelIdProvider';
@@ -26,18 +25,16 @@ import { getDisplayPath } from '../../platform/common/platform/fs-paths';
 export class LiveKernelSwitcher implements IExtensionSyncActivationService {
     constructor(
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
-        @inject(IVSCodeNotebook) private readonly vscNotebook: IVSCodeNotebook,
         @inject(IControllerRegistration) private readonly controllerRegistration: IControllerRegistration,
-        @inject(ICommandManager) private readonly commandManager: ICommandManager,
         @inject(PreferredRemoteKernelIdProvider)
         private readonly preferredRemoteKernelIdProvider: PreferredRemoteKernelIdProvider
     ) {}
     public activate() {
         // Listen to notebook open events. If we open a notebook that had a remote kernel started on it, reset it
-        this.vscNotebook.onDidOpenNotebookDocument(this.onDidOpenNotebook, this, this.disposables);
+        workspace.onDidOpenNotebookDocument(this.onDidOpenNotebook, this, this.disposables);
 
         // For all currently open notebooks, need to run the same code
-        this.vscNotebook.notebookDocuments.forEach((d) => this.onDidOpenNotebook(d));
+        workspace.notebookDocuments.forEach((d) => this.onDidOpenNotebook(d));
     }
 
     @swallowExceptions()
@@ -91,13 +88,13 @@ export class LiveKernelSwitcher implements IExtensionSyncActivationService {
     private async switchKernel(n: NotebookDocument, kernel: Readonly<KernelConnectionMetadata>) {
         traceVerbose(`Using notebook.selectKernel to force remote kernel for ${getDisplayPath(n.uri)} to ${kernel.id}`);
         // Do this in a loop as it may fail
-        await this.commandManager.executeCommand('notebook.selectKernel', {
+        await commands.executeCommand('notebook.selectKernel', {
             id: kernel.id,
             extension: JVSC_EXTENSION_ID
         });
         const success = await waitForCondition(
             async () => {
-                if (this.vscNotebook.activeNotebookEditor?.notebook === n) {
+                if (window.activeNotebookEditor?.notebook === n) {
                     const selected = this.controllerRegistration.getSelected(n);
                     if (selected?.connection.id === kernel.id) {
                         selected.restoreConnection(n).catch(noop);

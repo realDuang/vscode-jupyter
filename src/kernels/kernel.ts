@@ -13,7 +13,8 @@ import {
     Uri,
     NotebookDocument,
     Memento,
-    CancellationError
+    CancellationError,
+    window
 } from 'vscode';
 import {
     CodeSnippets,
@@ -21,7 +22,6 @@ import {
     WIDGET_MIMETYPE,
     WIDGET_VERSION_NON_PYTHON_KERNELS
 } from '../platform/common/constants';
-import { IApplicationShell } from '../platform/common/application/types';
 import { WrappedError } from '../platform/errors/types';
 import { splitLines } from '../platform/common/helpers';
 import { traceInfo, traceInfoIfCI, traceError, traceVerbose, traceWarning } from '../platform/logging';
@@ -192,7 +192,6 @@ abstract class BaseKernel implements IBaseKernel {
         public readonly kernelConnectionMetadata: Readonly<KernelConnectionMetadata>,
         private readonly sessionCreator: IKernelSessionFactory,
         protected readonly kernelSettings: IKernelSettings,
-        protected readonly appShell: IApplicationShell,
         protected readonly startupCodeProviders: IStartupCodeProvider[],
         public readonly _creator: KernelActionSource,
         private readonly workspaceMemento: Memento
@@ -287,7 +286,7 @@ abstract class BaseKernel implements IBaseKernel {
                 getDisplayNameOrNameOfKernelConnection(this.kernelConnectionMetadata)
             );
             const yes = DataScience.restartKernelMessageYes;
-            const v = await this.appShell.showInformationMessage(message, { modal: true }, yes);
+            const v = await window.showInformationMessage(message, { modal: true }, yes);
             if (v === yes) {
                 await this.restart();
             }
@@ -515,13 +514,28 @@ abstract class BaseKernel implements IBaseKernel {
         }
 
         const promise = (async () => {
+            // Sometimes kernels can die during interrupt, so wait for the session to die (if not already dead and only when busy)
+            // I.e. we do not want to handle cases where kernel dies when not busy.
+            const timedOutPromiseDueToDeadKernel = createDeferred<InterruptResult>();
+            if (this.status === 'busy') {
+                this.onDisposed(() => timedOutPromiseDueToDeadKernel.resolve(InterruptResult.Dead), this, disposables);
+                this.onStatusChanged(
+                    () =>
+                        this.status === 'dead'
+                            ? timedOutPromiseDueToDeadKernel.resolve(InterruptResult.Dead)
+                            : undefined,
+                    this,
+                    disposables
+                );
+            }
             try {
                 // Wait for all of the pending cells to finish or the timeout to fire
                 return await raceTimeout(
                     this.kernelSettings.interruptTimeout,
                     InterruptResult.TimedOut,
                     pendingExecutions.then(() => InterruptResult.Success),
-                    restarted.promise.then(() => InterruptResult.Restarted)
+                    restarted.promise.then(() => InterruptResult.Restarted),
+                    timedOutPromiseDueToDeadKernel.promise
                 );
             } catch (exc) {
                 // Something failed. See if we restarted or not.
@@ -817,7 +831,7 @@ abstract class BaseKernel implements IBaseKernel {
                 );
 
                 const newVersion = (this._ipywidgetsVersion = isVersion7 ? 7 : isVersion8 ? 8 : undefined);
-                traceVerbose(`Determined IPyWidgets Version as ${newVersion} and event fired`);
+                traceVerbose(`Determined IPyWidgets Version as ${newVersion}`);
                 // If user does not have ipywidgets installed, then this event will never get fired.
                 this._ipywidgetsVersion == newVersion;
                 this._onIPyWidgetVersionResolved.fire(newVersion);
@@ -880,7 +894,7 @@ abstract class BaseKernel implements IBaseKernel {
             if (file) {
                 result.push(`__vsc_ipynb_file__ = "${file.replace(/\\/g, '\\\\')}"`);
             }
-            if (!this.kernelSettings.enableExtendedKernelCompletions) {
+            if (!this.kernelSettings.enableExtendedPythonKernelCompletions) {
                 result.push(CodeSnippets.DisableJedi);
             }
 
@@ -912,21 +926,13 @@ abstract class BaseKernel implements IBaseKernel {
             results.push(...splitLines(matplotInit, { trim: false }));
 
             // TODO: This must be joined with the previous request (else we send two separate requests unnecessarily).
-            const useDark = this.appShell.activeColorTheme.kind === ColorThemeKind.Dark;
-            if (!this.kernelSettings.ignoreVscodeTheme) {
-                // Reset the matplotlib style based on if dark or not.
-                results.push(
-                    useDark
-                        ? "matplotlib.style.use('dark_background')"
-                        : `matplotlib.rcParams.update(${Identifiers.MatplotLibDefaultParams})`
-                );
-            }
-        }
-
-        // Add in SVG to the figure formats if needed
-        if (this.kernelSettings.generateSVGPlots) {
-            results.push(...splitLines(CodeSnippets.AppendSVGFigureFormat, { trim: false }));
-            traceVerbose('Add SVG to matplotlib figure formats');
+            const useDark = window.activeColorTheme.kind === ColorThemeKind.Dark;
+            // Reset the matplotlib style based on if dark or not.
+            results.push(
+                useDark
+                    ? "matplotlib.style.use('dark_background')"
+                    : `matplotlib.rcParams.update(${Identifiers.MatplotLibDefaultParams})`
+            );
         }
 
         return results;
@@ -974,7 +980,6 @@ export class ThirdPartyKernel extends BaseKernel implements IThirdPartyKernel {
         resourceUri: Resource,
         kernelConnectionMetadata: Readonly<KernelConnectionMetadata>,
         sessionCreator: IKernelSessionFactory,
-        appShell: IApplicationShell,
         kernelSettings: IKernelSettings,
         startupCodeProviders: IStartupCodeProvider[],
         workspaceMemento: Memento
@@ -986,7 +991,6 @@ export class ThirdPartyKernel extends BaseKernel implements IThirdPartyKernel {
             kernelConnectionMetadata,
             sessionCreator,
             kernelSettings,
-            appShell,
             startupCodeProviders,
             '3rdPartyExtension',
             workspaceMemento
@@ -1008,7 +1012,6 @@ export class Kernel extends BaseKernel implements IKernel {
         kernelConnectionMetadata: Readonly<KernelConnectionMetadata>,
         sessionCreator: IKernelSessionFactory,
         kernelSettings: IKernelSettings,
-        appShell: IApplicationShell,
         public readonly controller: IKernelController,
         startupCodeProviders: IStartupCodeProvider[],
         workspaceMemento: Memento
@@ -1020,7 +1023,6 @@ export class Kernel extends BaseKernel implements IKernel {
             kernelConnectionMetadata,
             sessionCreator,
             kernelSettings,
-            appShell,
             startupCodeProviders,
             'jupyterExtension',
             workspaceMemento

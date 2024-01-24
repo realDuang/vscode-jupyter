@@ -2,15 +2,16 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, named } from 'inversify';
-import { Memento } from 'vscode';
+import { Memento, workspace } from 'vscode';
 import { getExperimentationService, IExperimentationService, TargetPopulation } from 'vscode-tas-client';
-import { IApplicationEnvironment, IWorkspaceService } from '../application/types';
-import { JVSC_EXTENSION_ID } from '../constants';
+import { IApplicationEnvironment } from '../application/types';
+import { JVSC_EXTENSION_ID, isPreReleaseVersion } from '../constants';
 import { traceInfo, traceVerbose } from '../../logging';
 import { GLOBAL_MEMENTO, IConfigurationService, IExperimentService, IJupyterSettings, IMemento } from '../types';
 import { Experiments } from '../utils/localize';
 import { Experiments as ExperimentGroups } from '../types';
 import { ExperimentationTelemetry } from './telemetry.node';
+import { getVSCodeChannel } from '../application/applicationEnvironment';
 
 // This is a hacky way to determine what experiments have been loaded by the Experiments service.
 // There's no public API yet, hence we access the global storage that is updated by the experiments package.
@@ -40,7 +41,6 @@ export class ExperimentService implements IExperimentService {
     }
     constructor(
         @inject(IConfigurationService) readonly configurationService: IConfigurationService,
-        @inject(IWorkspaceService) readonly workspace: IWorkspaceService,
         @inject(IApplicationEnvironment) private readonly appEnvironment: IApplicationEnvironment,
         @inject(IMemento) @named(GLOBAL_MEMENTO) private readonly globalState: Memento
     ) {
@@ -59,7 +59,7 @@ export class ExperimentService implements IExperimentService {
 
         let targetPopulation: TargetPopulation;
 
-        if (this.appEnvironment.channel === 'insiders') {
+        if (getVSCodeChannel() === 'insiders') {
             targetPopulation = TargetPopulation.Insiders;
         } else {
             targetPopulation = TargetPopulation.Public;
@@ -69,7 +69,7 @@ export class ExperimentService implements IExperimentService {
 
         this.experimentationService = getExperimentationService(
             JVSC_EXTENSION_ID,
-            this.appEnvironment.packageJson.version!,
+            this.appEnvironment.extensionVersion!,
             targetPopulation,
             telemetryReporter,
             this.globalState
@@ -115,6 +115,20 @@ export class ExperimentService implements IExperimentService {
             return true;
         }
 
+        // Enable the kernel completions experiment for all insider users
+        if (
+            experiment === ExperimentGroups.KernelCompletions &&
+            (getVSCodeChannel() === 'insiders' || isPreReleaseVersion())
+        ) {
+            return true;
+        }
+        if (
+            experiment === ExperimentGroups.DoNotWaitForZmqPortsToBeUsed &&
+            (getVSCodeChannel() === 'insiders' || isPreReleaseVersion())
+        ) {
+            return true;
+        }
+
         // If getTreatmentVariable returns undefined,
         // it means that the value for this experiment was not found on the server.
         const treatmentVariable = this.experimentationService.getTreatmentVariable(
@@ -141,7 +155,7 @@ export class ExperimentService implements IExperimentService {
         return this.globalState.get<{ features: string[] }>(EXP_MEMENTO_KEY, { features: [] }).features;
     }
     private logExperiments() {
-        const telemetrySettings = this.workspace.getConfiguration('telemetry');
+        const telemetrySettings = workspace.getConfiguration('telemetry');
         let experimentsDisabled = false;
         if (telemetrySettings && telemetrySettings.get<boolean>('enableTelemetry') === false) {
             traceInfo('Telemetry is disabled');
@@ -174,6 +188,7 @@ export class ExperimentService implements IExperimentService {
         }
 
         const optedIntoExperiments = new Set(this._optInto);
+        const enabledExperiments = new Set<string>();
 
         // Log experiments that users manually opt out, these are experiments which are added using the exp framework.
         this._optOutFrom
@@ -186,8 +201,24 @@ export class ExperimentService implements IExperimentService {
         this._optInto
             .filter((exp) => exp !== 'All')
             .forEach((exp) => {
+                enabledExperiments.add(exp);
                 traceInfo(Experiments.inGroup(exp));
             });
+
+        if (
+            experimentsDisabled &&
+            !enabledExperiments.has(ExperimentGroups.KernelCompletions) &&
+            (getVSCodeChannel() === 'insiders' || isPreReleaseVersion())
+        ) {
+            traceInfo(Experiments.inGroup(ExperimentGroups.KernelCompletions));
+        }
+        if (
+            experimentsDisabled &&
+            !enabledExperiments.has(ExperimentGroups.DoNotWaitForZmqPortsToBeUsed) &&
+            (getVSCodeChannel() === 'insiders' || isPreReleaseVersion())
+        ) {
+            traceInfo(Experiments.inGroup(ExperimentGroups.DoNotWaitForZmqPortsToBeUsed));
+        }
 
         if (!experimentsDisabled) {
             // Log experiments that users are added to by the exp framework

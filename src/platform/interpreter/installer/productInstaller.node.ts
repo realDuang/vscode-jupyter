@@ -16,7 +16,6 @@ import {
 } from './types';
 import { logValue, traceDecoratorVerbose } from '../../logging';
 import { PythonEnvironment } from '../../pythonEnvironments/info';
-import { IApplicationShell, IWorkspaceService } from '../../common/application/types';
 import { traceError } from '../../logging';
 import { IProcessServiceFactory } from '../../common/process/types.node';
 import {
@@ -70,11 +69,7 @@ export async function isModulePresentInEnvironment(memento: Memento, product: Pr
  * Installer for this extension. Finds the installer for a module and then runs it.
  */
 export class DataScienceInstaller {
-    protected readonly appShell: IApplicationShell;
-
     protected readonly configService: IConfigurationService;
-
-    protected readonly workspaceService: IWorkspaceService;
 
     private readonly productService: IProductService;
 
@@ -84,9 +79,7 @@ export class DataScienceInstaller {
         protected serviceContainer: IServiceContainer,
         _outputChannel: IOutputChannel
     ) {
-        this.appShell = serviceContainer.get<IApplicationShell>(IApplicationShell);
         this.configService = serviceContainer.get<IConfigurationService>(IConfigurationService);
-        this.workspaceService = serviceContainer.get<IWorkspaceService>(IWorkspaceService);
         this.productService = serviceContainer.get<IProductService>(IProductService);
         this.persistentStateFactory = serviceContainer.get<IPersistentStateFactory>(IPersistentStateFactory);
     }

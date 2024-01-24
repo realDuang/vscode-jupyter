@@ -18,23 +18,16 @@ import {
     Disposable,
     window,
     NotebookEdit,
-    NotebookEditorRevealType
+    NotebookEditorRevealType,
+    commands
 } from 'vscode';
-import { ICommandManager, IDocumentManager, IWorkspaceService } from '../platform/common/application/types';
-import { Commands, MARKDOWN_LANGUAGE, PYTHON_LANGUAGE } from '../platform/common/constants';
+import { Commands, MARKDOWN_LANGUAGE, PYTHON_LANGUAGE, isWebExtension } from '../platform/common/constants';
 import { traceInfo, traceInfoIfCI, traceVerbose, traceWarning } from '../platform/logging';
 import { IFileSystem } from '../platform/common/platform/types';
 import uuid from 'uuid/v4';
-
-import { IConfigurationService, InteractiveWindowMode, IsWebExtension, Resource } from '../platform/common/types';
+import { IConfigurationService, InteractiveWindowMode, Resource } from '../platform/common/types';
 import { noop } from '../platform/common/utils/misc';
-import {
-    IKernel,
-    IKernelProvider,
-    isLocalConnection,
-    KernelConnectionMetadata,
-    NotebookCellRunState
-} from '../kernels/types';
+import { IKernel, IKernelProvider, isLocalConnection, KernelConnectionMetadata } from '../kernels/types';
 import { chainable } from '../platform/common/utils/decorators';
 import { InteractiveCellResultError } from '../platform/errors/interactiveCellResultError';
 import { DataScience } from '../platform/common/utils/localize';
@@ -42,7 +35,7 @@ import { createDeferred } from '../platform/common/utils/async';
 import { IServiceContainer } from '../platform/ioc/types';
 import { createOutputWithErrorMessageForDisplay } from '../platform/errors/errorUtils';
 import { INotebookExporter } from '../kernels/jupyter/types';
-import { IExportDialog, ExportFormat } from '../notebooks/export/types';
+import { ExportFormat } from '../notebooks/export/types';
 import { generateCellsFromNotebookDocument } from './editor-integration/cellFactory';
 import { CellMatcher } from './editor-integration/cellMatcher';
 import {
@@ -70,6 +63,8 @@ import {
     InteractiveWindowController as InteractiveController,
     InteractiveControllerFactory
 } from './InteractiveWindowController';
+import { getRootFolder } from '../platform/common/application/workspace.base';
+import { ExportDialog } from '../notebooks/export/exportDialog';
 
 /**
  * ViewModel for an interactive window from the Jupyter extension's point of view.
@@ -111,19 +106,14 @@ export class InteractiveWindow implements IInteractiveWindow {
 
     public readonly notebookUri: Uri;
 
-    private readonly documentManager: IDocumentManager;
     private readonly fs: IFileSystem;
     private readonly configuration: IConfigurationService;
     private readonly jupyterExporter: INotebookExporter;
-    private readonly workspaceService: IWorkspaceService;
-    private readonly exportDialog: IExportDialog;
     private readonly interactiveWindowDebugger: IInteractiveWindowDebugger | undefined;
     private readonly errorHandler: IDataScienceErrorHandler;
     private readonly codeGeneratorFactory: ICodeGeneratorFactory;
     private readonly storageFactory: IGeneratedCodeStorageFactory;
     private readonly debuggingManager: IInteractiveWindowDebuggingManager;
-    private readonly isWebExtension: boolean;
-    private readonly commandManager: ICommandManager;
     private readonly kernelProvider: IKernelProvider;
     private controller: InteractiveController | undefined;
     constructor(
@@ -133,13 +123,9 @@ export class InteractiveWindow implements IInteractiveWindow {
         notebookEditorOrTab: NotebookEditor | InteractiveTab,
         public readonly inputUri: Uri
     ) {
-        this.documentManager = this.serviceContainer.get<IDocumentManager>(IDocumentManager);
-        this.commandManager = this.serviceContainer.get<ICommandManager>(ICommandManager);
         this.fs = this.serviceContainer.get<IFileSystem>(IFileSystem);
         this.configuration = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
         this.jupyterExporter = this.serviceContainer.get<INotebookExporter>(INotebookExporter);
-        this.workspaceService = this.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
-        this.exportDialog = this.serviceContainer.get<IExportDialog>(IExportDialog);
         this.interactiveWindowDebugger =
             this.serviceContainer.tryGet<IInteractiveWindowDebugger>(IInteractiveWindowDebugger);
         this.errorHandler = this.serviceContainer.get<IDataScienceErrorHandler>(IDataScienceErrorHandler);
@@ -149,7 +135,6 @@ export class InteractiveWindow implements IInteractiveWindow {
         this.debuggingManager = this.serviceContainer.get<IInteractiveWindowDebuggingManager>(
             IInteractiveWindowDebuggingManager
         );
-        this.isWebExtension = this.serviceContainer.get<boolean>(IsWebExtension);
         this.notebookUri = isInteractiveInputTab(notebookEditorOrTab)
             ? notebookEditorOrTab.input.uri
             : notebookEditorOrTab.notebook.uri;
@@ -227,7 +212,7 @@ export class InteractiveWindow implements IInteractiveWindow {
         if (this.controller.controller) {
             this.controller.startKernel().catch(noop);
         } else {
-            traceInfo('No controller selected for Interactive Window initilization');
+            traceInfo('No controller selected for Interactive Window initialization');
             this.controller.setInfoMessageCell(DataScience.selectKernelForEditor);
         }
     }
@@ -301,17 +286,17 @@ export class InteractiveWindow implements IInteractiveWindow {
     public async debugCode(code: string, fileUri: Uri, line: number): Promise<boolean> {
         let saved = true;
         // Make sure the file is saved before debugging
-        const doc = this.documentManager.textDocuments.find((d) => this.fs.arePathsSame(d.uri, fileUri));
+        const doc = workspace.textDocuments.find((d) => this.fs.arePathsSame(d.uri, fileUri));
         if (!this.useNewDebugMode() && doc && doc.isUntitled) {
             // Before we start, get the list of documents
-            const beforeSave = [...this.documentManager.textDocuments];
+            const beforeSave = [...workspace.textDocuments];
 
             saved = await doc.save();
 
             // If that worked, we have to open the new document. It should be
             // the new entry in the list
             if (saved) {
-                const diff = this.documentManager.textDocuments.filter((f) => beforeSave.indexOf(f) === -1);
+                const diff = workspace.textDocuments.filter((f) => beforeSave.indexOf(f) === -1);
                 if (diff && diff.length > 0) {
                     // The interactive window often opens at the same time. Avoid picking that one.
                     // Another unrelated window could open at the same time too.
@@ -322,7 +307,7 @@ export class InteractiveWindow implements IInteractiveWindow {
                     fileUri = savedFileEditor.uri;
 
                     // Open the new document
-                    await this.documentManager.openTextDocument(fileUri);
+                    await workspace.openTextDocument(fileUri);
                 }
             }
         }
@@ -445,8 +430,10 @@ export class InteractiveWindow implements IInteractiveWindow {
             traceInfoIfCI('InteractiveWindow.ts.createExecutionPromise.kernel.executeCell');
             const iwCellMetadata = getInteractiveCellMetadata(cell);
             const execution = this.kernelProvider.getKernelExecution(kernel!);
-            success =
-                (await execution.executeCell(cell, iwCellMetadata?.generatedCode?.code)) !== NotebookCellRunState.Error;
+            success = await execution.executeCell(cell, iwCellMetadata?.generatedCode?.code).then(
+                () => true,
+                () => false
+            );
             traceInfoIfCI('InteractiveWindow.ts.createExecutionPromise.kernel.executeCell.finished');
         } finally {
             await detachKernel();
@@ -464,7 +451,7 @@ export class InteractiveWindow implements IInteractiveWindow {
         if (this.notebookDocument) {
             await Promise.all(
                 this.notebookDocument.getCells().map(async (_cell, index) => {
-                    await this.commandManager.executeCommand('notebook.cell.expandCellInput', {
+                    await commands.executeCommand('notebook.cell.expandCellInput', {
                         ranges: [{ start: index, end: index + 1 }],
                         document: this.notebookUri
                     });
@@ -480,7 +467,7 @@ export class InteractiveWindow implements IInteractiveWindow {
                     if (cell.kind !== NotebookCellKind.Code) {
                         return;
                     }
-                    await this.commandManager.executeCommand('notebook.cell.collapseCellInput', {
+                    await commands.executeCommand('notebook.cell.collapseCellInput', {
                         ranges: [{ start: index, end: index + 1 }],
                         document: this.notebookUri
                     });
@@ -508,7 +495,7 @@ export class InteractiveWindow implements IInteractiveWindow {
         if (this.owner) {
             return this.owner;
         }
-        const root = this.workspaceService.rootFolder;
+        const root = getRootFolder();
         if (root) {
             return root;
         }
@@ -603,9 +590,9 @@ export class InteractiveWindow implements IInteractiveWindow {
         const cells = generateCellsFromNotebookDocument(this.notebookDocument, magicCommandsAsComments);
 
         // Should be an array of cells
-        if (cells && this.exportDialog) {
+        if (cells) {
             // Bring up the export file dialog box
-            const uri = await this.exportDialog.showDialog(ExportFormat.ipynb, this.owningResource);
+            const uri = await new ExportDialog().showDialog(ExportFormat.ipynb, this.owningResource);
             if (uri) {
                 await this.jupyterExporter?.exportToFile(cells, getFilePath(uri));
             }
@@ -633,9 +620,9 @@ export class InteractiveWindow implements IInteractiveWindow {
         }
 
         // Then run the export command with these contents
-        if (this.isWebExtension) {
+        if (isWebExtension()) {
             // In web, we currently only support exporting as python script
-            this.commandManager
+            commands
                 .executeCommand(
                     Commands.ExportAsPythonScript,
                     this.notebookDocument,
@@ -643,7 +630,7 @@ export class InteractiveWindow implements IInteractiveWindow {
                 )
                 .then(noop, noop);
         } else {
-            this.commandManager
+            commands
                 .executeCommand(
                     Commands.Export,
                     this.notebookDocument,

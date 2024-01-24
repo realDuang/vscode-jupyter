@@ -3,14 +3,24 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { EventEmitter, Event, Uri, ExtensionMode, CancellationTokenSource, CancellationToken } from 'vscode';
+import {
+    EventEmitter,
+    Event,
+    Uri,
+    ExtensionMode,
+    CancellationTokenSource,
+    CancellationToken,
+    workspace,
+    extensions,
+    window,
+    commands
+} from 'vscode';
 import { IPythonApiProvider, IPythonExtensionChecker, PythonApi, PythonEnvironment_PythonApi } from './types';
 import * as localize from '../common/utils/localize';
 import { injectable, inject } from 'inversify';
 import { sendTelemetryEvent } from '../../telemetry';
-import { IWorkspaceService, IApplicationShell, ICommandManager } from '../common/application/types';
 import { isCI, PythonExtension, Telemetry } from '../common/constants';
-import { IExtensions, IDisposableRegistry, IExtensionContext } from '../common/types';
+import { IDisposableRegistry, IExtensionContext } from '../common/types';
 import { createDeferred, sleep } from '../common/utils/async';
 import { traceError, traceInfo, traceInfoIfCI, traceVerbose, traceWarning } from '../logging';
 import { getDisplayPath, getFilePath } from '../common/platform/fs-paths';
@@ -31,6 +41,7 @@ import { PythonExtensionApiNotExportedError } from '../errors/pythonExtApiNotExp
 import { getOSType, OSType } from '../common/utils/platform';
 import { SemVer } from 'semver';
 import { getEnvironmentType } from '../interpreter/helpers';
+import { getWorkspaceFolderIdentifier } from '../common/application/workspace.base';
 
 export function deserializePythonEnvironment(
     pythonVersion: Partial<PythonEnvironment_PythonApi> | undefined,
@@ -211,14 +222,12 @@ export class OldPythonApiProvider implements IPythonApiProvider {
     private _pythonExtensionVersion?: SemVer | undefined;
 
     constructor(
-        @inject(IExtensions) private readonly extensions: IExtensions,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
-        @inject(IPythonExtensionChecker) private extensionChecker: IPythonExtensionChecker,
-        @inject(IWorkspaceService) private workspace: IWorkspaceService
+        @inject(IPythonExtensionChecker) private extensionChecker: IPythonExtensionChecker
     ) {
         const previouslyInstalled = this.extensionChecker.isPythonExtensionInstalled;
         if (!previouslyInstalled) {
-            this.extensions.onDidChange(
+            extensions.onDidChange(
                 async () => {
                     if (this.extensionChecker.isPythonExtensionInstalled) {
                         await this.registerHooks();
@@ -237,7 +246,7 @@ export class OldPythonApiProvider implements IPythonApiProvider {
     }
     public async getNewApi(): Promise<PythonExtensionApi | undefined> {
         await this.init();
-        const extension = this.extensions.getExtension<PythonExtensionApi>(PythonExtension);
+        const extension = extensions.getExtension<PythonExtensionApi>(PythonExtension);
         if (extension?.packageJSON?.version) {
             this._pythonExtensionVersion = new SemVer(extension?.packageJSON?.version);
         }
@@ -247,7 +256,7 @@ export class OldPythonApiProvider implements IPythonApiProvider {
     public setApi(api: PythonApi): void {
         // Never allow accessing python API (we don't want to ever use the API and run code in untrusted API).
         // Don't assume Python API will always be disabled in untrusted workspaces.
-        if (this.api.resolved || !this.workspace.isTrusted) {
+        if (this.api.resolved || !workspace.isTrusted) {
             return;
         }
         this.api.resolve(api);
@@ -257,7 +266,7 @@ export class OldPythonApiProvider implements IPythonApiProvider {
         if (this.initialized) {
             return;
         }
-        const pythonExtension = this.extensions.getExtension<{ jupyter: { registerHooks(): void } }>(PythonExtension);
+        const pythonExtension = extensions.getExtension<{ jupyter: { registerHooks(): void } }>(PythonExtension);
         if (!pythonExtension) {
             await this.extensionChecker.showPythonExtensionInstallRequiredPrompt();
         } else {
@@ -269,7 +278,7 @@ export class OldPythonApiProvider implements IPythonApiProvider {
         if (this.hooksRegistered) {
             return;
         }
-        const pythonExtension = this.extensions.getExtension<{ jupyter: { registerHooks(): void } }>(PythonExtension);
+        const pythonExtension = extensions.getExtension<{ jupyter: { registerHooks(): void } }>(PythonExtension);
         if (!pythonExtension) {
             return;
         }
@@ -312,15 +321,9 @@ export class PythonExtensionChecker implements IPythonExtensionChecker {
      * Used only for testing
      */
     public static promptDisplayed?: boolean;
-    constructor(
-        @inject(IExtensions) private readonly extensions: IExtensions,
-        @inject(IApplicationShell) private readonly appShell: IApplicationShell,
-        @inject(ICommandManager) private readonly commandManager: ICommandManager,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
-        @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry
-    ) {
+    constructor(@inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry) {
         // Listen for the python extension being installed or uninstalled
-        this.extensions.onDidChange(this.extensionsChangeHandler.bind(this), this, this.disposables);
+        extensions.onDidChange(this.extensionsChangeHandler.bind(this), this, this.disposables);
 
         // Name is a bit different here as we use the isPythonExtensionInstalled property for checking the current state.
         // This property is to see if we change it during extension actions.
@@ -328,15 +331,15 @@ export class PythonExtensionChecker implements IPythonExtensionChecker {
     }
 
     public get isPythonExtensionInstalled() {
-        return this.extensions.getExtension(PythonExtension) !== undefined;
+        return extensions.getExtension(PythonExtension) !== undefined;
     }
     public get isPythonExtensionActive() {
-        return this.extensions.getExtension(PythonExtension)?.isActive === true;
+        return extensions.getExtension(PythonExtension)?.isActive === true;
     }
 
     // Directly install the python extension instead of just showing the extension open page
     public async directlyInstallPythonExtension(): Promise<void> {
-        return this.commandManager.executeCommand('workbench.extensions.installExtension', PythonExtension, {
+        return commands.executeCommand('workbench.extensions.installExtension', PythonExtension, {
             context: { skipWalkthrough: true }
         });
     }
@@ -345,7 +348,7 @@ export class PythonExtensionChecker implements IPythonExtensionChecker {
     // python extension
     public async showPythonExtensionInstallRequiredPrompt(): Promise<void> {
         // If workspace is not trusted, then don't show prompt
-        if (!this.workspace.isTrusted) {
+        if (!workspace.isTrusted) {
             return;
         }
 
@@ -353,7 +356,7 @@ export class PythonExtensionChecker implements IPythonExtensionChecker {
         // Ask user if they want to install and then wait for them to actually install it.
         const yes = localize.Common.bannerLabelYes;
         sendTelemetryEvent(Telemetry.PythonExtensionNotInstalled, undefined, { action: 'displayed' });
-        const answer = await this.appShell.showInformationMessage(
+        const answer = await window.showInformationMessage(
             localize.DataScience.pythonExtensionRequired,
             { modal: true },
             yes
@@ -367,7 +370,7 @@ export class PythonExtensionChecker implements IPythonExtensionChecker {
     }
     private async installPythonExtension() {
         // Have the user install python
-        this.commandManager.executeCommand('extension.open', PythonExtension).then(noop, noop);
+        commands.executeCommand('extension.open', PythonExtension).then(noop, noop);
     }
 
     private async extensionsChangeHandler(): Promise<void> {
@@ -418,7 +421,6 @@ export class InterpreterService implements IInterpreterService {
         @inject(IPythonApiProvider) private readonly apiProvider: IPythonApiProvider,
         @inject(IPythonExtensionChecker) private extensionChecker: IPythonExtensionChecker,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
         @inject(IExtensionContext) private readonly context: IExtensionContext
     ) {
         if (this.extensionChecker.isPythonExtensionInstalled) {
@@ -436,15 +438,15 @@ export class InterpreterService implements IInterpreterService {
                 );
             }
         }
-        this.workspace.onDidChangeWorkspaceFolders(this.onDidChangeWorkspaceFolders, this, disposables);
-        this.workspace.onDidGrantWorkspaceTrust(() => this.refreshInterpreters(true), this, this.disposables);
+        workspace.onDidChangeWorkspaceFolders(this.onDidChangeWorkspaceFolders, this, disposables);
+        workspace.onDidGrantWorkspaceTrust(() => this.refreshInterpreters(true), this, this.disposables);
         this.disposables.push(this._onDidChangeStatus);
         this.disposables.push(this.refreshPromises);
         this.disposables.push(this.onResumeEnvDetection);
         this.refreshPromises.onStateChange(() => {
             this.status = this.refreshPromises.isComplete ? 'idle' : 'refreshing';
         });
-        this.workspace.onDidGrantWorkspaceTrust(
+        workspace.onDidGrantWorkspaceTrust(
             () => this.populateCachedListOfInterpreters(true).catch(noop),
             this,
             this.disposables
@@ -535,21 +537,23 @@ export class InterpreterService implements IInterpreterService {
     private workspaceCachedActiveInterpreter = new Set<string>();
     private lastLoggedResourceAndInterpreterId = '';
     public async getActiveInterpreter(resource?: Uri): Promise<PythonEnvironment | undefined> {
-        if (!this.workspace.isTrusted) {
+        if (!workspace.isTrusted) {
             return;
         }
         const stopWatch = new StopWatch();
         this.hookupOnDidChangeInterpreterEvent();
         // If there's only one workspace folder, and we don't have a resource, then use the
         // workspace uri of the single workspace folder.
-        if (!resource && this.workspace.workspaceFolders?.length === 1) {
-            resource = this.workspace.workspaceFolders[0].uri;
+        if (!resource && workspace.workspaceFolders?.length === 1) {
+            resource = workspace.workspaceFolders[0].uri;
         }
         // We need a valid resource, thats associated with a workspace folder
-        if (this.workspace.workspaceFolders?.length) {
-            resource = this.workspace.getWorkspaceFolder(resource)?.uri || this.workspace.workspaceFolders[0].uri;
+        if (workspace.workspaceFolders?.length) {
+            resource =
+                (resource ? workspace.getWorkspaceFolder(resource)?.uri : undefined) ||
+                workspace.workspaceFolders[0].uri;
         }
-        const workspaceId = this.workspace.getWorkspaceFolderIdentifier(resource);
+        const workspaceId = getWorkspaceFolderIdentifier(resource);
         const promise = this.getApi().then(async (api) => {
             if (!api) {
                 return;
@@ -604,7 +608,7 @@ export class InterpreterService implements IInterpreterService {
         pythonPath: Uri | { path: string } | InterpreterId,
         token?: CancellationToken
     ): Promise<undefined | PythonEnvironment> {
-        if (!this.workspace.isTrusted) {
+        if (!workspace.isTrusted) {
             throw new Error('Unable to determine active Interpreter as Workspace is not trusted');
         }
 
@@ -764,7 +768,7 @@ export class InterpreterService implements IInterpreterService {
         cancelToken: CancellationToken,
         recursiveCounter = 0
     ): Promise<PythonEnvironment[]> {
-        if (!this.workspace.isTrusted) {
+        if (!workspace.isTrusted) {
             return [];
         }
 

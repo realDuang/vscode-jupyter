@@ -20,16 +20,16 @@ import {
 } from '../../../notebooks/controllers/types';
 import { getLanguageOfNotebookDocument } from '../../../notebooks/languages/helpers';
 import { IPythonExtensionChecker } from '../../../platform/api/types';
-import { IVSCodeNotebook } from '../../../platform/common/application/types';
 import {
     InteractiveWindowView,
     JupyterNotebookView,
     PYTHON_LANGUAGE,
-    Telemetry
+    Telemetry,
+    isWebExtension
 } from '../../../platform/common/constants';
 import { dispose } from '../../../platform/common/utils/lifecycle';
 import { getDisplayPath } from '../../../platform/common/platform/fs-paths';
-import { IDisposable, IDisposableRegistry, IsWebExtension } from '../../../platform/common/types';
+import { IDisposable, IDisposableRegistry } from '../../../platform/common/types';
 import { getNotebookMetadata, getResourceType, isJupyterNotebook } from '../../../platform/common/utils';
 import { noop } from '../../../platform/common/utils/misc';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
@@ -61,10 +61,8 @@ export class ControllerPreferredService {
         private readonly registration: IControllerRegistration,
         private readonly defaultService: ControllerDefaultService,
         private readonly interpreters: IInterpreterService | undefined,
-        private readonly notebook: IVSCodeNotebook,
         private readonly extensionChecker: IPythonExtensionChecker,
-        private readonly kernelRankHelper: KernelRankingHelper,
-        private readonly isWebExtension: boolean
+        private readonly kernelRankHelper: KernelRankingHelper
     ) {}
     private static instance: ControllerPreferredService | undefined;
     public static create(serviceContainer: IServiceContainer) {
@@ -72,15 +70,11 @@ export class ControllerPreferredService {
             ControllerPreferredService.instance = new ControllerPreferredService(
                 serviceContainer.get<IControllerRegistration>(IControllerRegistration),
                 ControllerDefaultService.create(serviceContainer),
-                serviceContainer.get<boolean>(IsWebExtension)
-                    ? undefined
-                    : serviceContainer.get<IInterpreterService>(IInterpreterService),
-                serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook),
+                isWebExtension() ? undefined : serviceContainer.get<IInterpreterService>(IInterpreterService),
                 serviceContainer.get<IPythonExtensionChecker>(IPythonExtensionChecker),
                 new KernelRankingHelper(
                     serviceContainer.get<PreferredRemoteKernelIdProvider>(PreferredRemoteKernelIdProvider)
-                ),
-                serviceContainer.get<boolean>(IsWebExtension)
+                )
             );
 
             serviceContainer.get<IDisposableRegistry>(IDisposableRegistry).push(ControllerPreferredService.instance);
@@ -90,11 +84,11 @@ export class ControllerPreferredService {
     }
     public activate() {
         // Sign up for document either opening or closing
-        this.disposables.add(this.notebook.onDidOpenNotebookDocument(this.onDidOpenNotebookDocument, this));
+        this.disposables.add(workspace.onDidOpenNotebookDocument(this.onDidOpenNotebookDocument, this));
         // If the extension activates after installing Jupyter extension, then ensure we load controllers right now.
-        this.notebook.notebookDocuments.forEach((notebook) => this.onDidOpenNotebookDocument(notebook));
+        workspace.notebookDocuments.forEach((notebook) => this.onDidOpenNotebookDocument(notebook));
         this.disposables.add(
-            this.notebook.onDidCloseNotebookDocument((document) => {
+            workspace.onDidCloseNotebookDocument((document) => {
                 const token = this.preferredCancelTokens.get(document);
                 if (token) {
                     this.preferredCancelTokens.delete(document);
@@ -106,7 +100,7 @@ export class ControllerPreferredService {
             this.registration.onDidChange(
                 ({ added }) =>
                     added.length
-                        ? this.notebook.notebookDocuments.map((nb) => this.onDidOpenNotebookDocument(nb))
+                        ? workspace.notebookDocuments.map((nb) => this.onDidOpenNotebookDocument(nb))
                         : undefined,
                 this
             )
@@ -454,7 +448,7 @@ export class ControllerPreferredService {
                     isPythonNotebook(notebookMetadata)) &&
                 !isExactMatch &&
                 this.extensionChecker.isPythonExtensionActive &&
-                !this.isWebExtension &&
+                !isWebExtension() &&
                 this.interpreters
             ) {
                 // If we're looking for local kernel connections then wait for all interpreters have been loaded

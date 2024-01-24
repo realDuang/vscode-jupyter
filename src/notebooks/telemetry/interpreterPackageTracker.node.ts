@@ -2,16 +2,17 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, optional } from 'inversify';
-import { NotebookDocument } from 'vscode';
+import { NotebookDocument, extensions } from 'vscode';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
 import { IPythonExtensionChecker, IPythonApiProvider } from '../../platform/api/types';
-import { IExtensions, IDisposableRegistry, InterpreterUri, IsWebExtension } from '../../platform/common/types';
+import { IDisposableRegistry, InterpreterUri } from '../../platform/common/types';
 import { isResource, noop } from '../../platform/common/utils/misc';
 import { IInterpreterService } from '../../platform/interpreter/contracts';
 import { IInstaller, Product } from '../../platform/interpreter/installer/types';
 import { IControllerRegistration, IVSCodeNotebookController } from '../controllers/types';
 import { trackKernelResourceInformation } from '../../kernels/telemetry/helper';
 import { IInterpreterPackages } from '../../platform/interpreter/types';
+import { isWebExtension } from '../../platform/constants';
 
 /**
  * Watches interpreter and notebook selection events in order to ask the IInterpreterPackages service to track
@@ -23,17 +24,15 @@ export class InterpreterPackageTracker implements IExtensionSyncActivationServic
     constructor(
         @inject(IInterpreterPackages) private readonly packages: IInterpreterPackages,
         @inject(IInstaller) @optional() private readonly installer: IInstaller | undefined,
-        @inject(IExtensions) private readonly extensions: IExtensions,
         @inject(IPythonExtensionChecker) private readonly pythonExtensionChecker: IPythonExtensionChecker,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
         @inject(IInterpreterService) private readonly interpreterService: IInterpreterService,
         @inject(IPythonApiProvider) private readonly apiProvider: IPythonApiProvider,
-        @inject(IControllerRegistration) private readonly notebookControllerManager: IControllerRegistration,
-        @inject(IsWebExtension) private readonly webExtension: boolean
+        @inject(IControllerRegistration) private readonly notebookControllerManager: IControllerRegistration
     ) {}
     public activate() {
         this.notebookControllerManager.onControllerSelected(this.onNotebookControllerSelected, this, this.disposables);
-        if (!this.webExtension) {
+        if (!isWebExtension()) {
             this.interpreterService.onDidChangeInterpreter(
                 this.trackPackagesOfActiveInterpreter,
                 this,
@@ -41,7 +40,7 @@ export class InterpreterPackageTracker implements IExtensionSyncActivationServic
             );
         }
         this.installer?.onInstalled(this.onDidInstallPackage, this, this.disposables); // Not supported in Web
-        this.extensions.onDidChange(this.trackUponActivation, this, this.disposables);
+        extensions.onDidChange(this.trackUponActivation, this, this.disposables);
         this.trackUponActivation().catch(noop);
         this.apiProvider.onDidActivatePythonExtension(this.trackUponActivation, this, this.disposables);
     }

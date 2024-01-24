@@ -2,25 +2,24 @@
 // Licensed under the MIT License.
 
 import { inject, injectable } from 'inversify';
-import { Disposable, EventEmitter } from 'vscode';
+import { EventEmitter, extensions } from 'vscode';
 import { IKernelFinder, LocalKernelConnectionMetadata } from '../../types';
 import { LocalKnownPathKernelSpecFinder } from './localKnownPathKernelSpecFinder.node';
-import { traceDecoratorError, traceError, traceVerbose } from '../../../platform/logging';
-import { IDisposableRegistry, IExtensions } from '../../../platform/common/types';
-import { areObjectsWithUrisTheSame, noop } from '../../../platform/common/utils/misc';
+import { traceDecoratorError, traceError } from '../../../platform/logging';
+import { IDisposableRegistry } from '../../../platform/common/types';
+import { areObjectsWithUrisTheSame } from '../../../platform/common/utils/misc';
 import { KernelFinder } from '../../kernelFinder';
 import { IExtensionSyncActivationService } from '../../../platform/activation/types';
 import { DataScience } from '../../../platform/common/utils/localize';
 import { IPythonExtensionChecker } from '../../../platform/api/types';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
 import { ContributedKernelFinderKind, IContributedKernelFinder } from '../../internalTypes';
-import { PYTHON_LANGUAGE, isUnitTestExecution } from '../../../platform/common/constants';
+import { PYTHON_LANGUAGE } from '../../../platform/common/constants';
 import { PromiseMonitor } from '../../../platform/common/utils/promises';
 import { getKernelRegistrationInfo, isUserRegisteredKernelSpecConnection } from '../../helpers';
 import { createDeferred, Deferred } from '../../../platform/common/utils/async';
 import { ILocalKernelFinder } from './localKernelSpecFinderBase.node';
-import { OldLocalPythonAndRelatedNonPythonKernelSpecFinder } from './localPythonAndRelatedNonPythonKernelSpecFinder.old.node';
-import { getDisplayPath } from '../../../platform/common/platform/fs-paths';
+import { LocalPythonAndRelatedNonPythonKernelSpecFinder } from './localPythonAndRelatedNonPythonKernelSpecFinder.node';
 
 // This class searches for local kernels.
 // First it searches on a global persistent state, then on the installed python interpreters,
@@ -56,16 +55,14 @@ export class ContributedLocalKernelSpecFinder
     private wasPythonInstalledWhenFetchingControllers = false;
 
     private cache: LocalKernelConnectionMetadata[] = [];
-    private cacheLoggingTimeout?: NodeJS.Timer | number;
     constructor(
         @inject(LocalKnownPathKernelSpecFinder) private readonly nonPythonKernelFinder: LocalKnownPathKernelSpecFinder,
-        @inject(OldLocalPythonAndRelatedNonPythonKernelSpecFinder)
+        @inject(LocalPythonAndRelatedNonPythonKernelSpecFinder)
         private readonly pythonKernelFinder: ILocalKernelFinder<LocalKernelConnectionMetadata>,
         @inject(IKernelFinder) kernelFinder: KernelFinder,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
         @inject(IPythonExtensionChecker) private readonly extensionChecker: IPythonExtensionChecker,
-        @inject(IInterpreterService) private readonly interpreters: IInterpreterService,
-        @inject(IExtensions) private readonly extensions: IExtensions
+        @inject(IInterpreterService) private readonly interpreters: IInterpreterService
     ) {
         kernelFinder.registerKernelFinder(this);
         this.disposables.push(this._onDidChangeStatus);
@@ -84,7 +81,7 @@ export class ContributedLocalKernelSpecFinder
                     : 'discovering';
         });
 
-        this.loadData().then(noop, noop);
+        this.updateCache();
         let combinedProgress: Deferred<void> | undefined = undefined;
         const updateCombinedStatus = () => {
             const latestStatus: (typeof this.nonPythonKernelFinder.status)[] = [
@@ -106,23 +103,23 @@ export class ContributedLocalKernelSpecFinder
         this.nonPythonKernelFinder.onDidChangeStatus(updateCombinedStatus, this, this.disposables);
         this.pythonKernelFinder.onDidChangeStatus(updateCombinedStatus, this, this.disposables);
         this.interpreters.onDidChangeStatus(updateCombinedStatus, this, this.disposables);
-        this.loadData().then(noop, noop);
-        this.interpreters.onDidChangeInterpreters(async () => this.loadData().then(noop, noop), this, this.disposables);
-        this.extensions.onDidChange(
+        this.updateCache();
+        this.interpreters.onDidChangeInterpreters(this.updateCache, this, this.disposables);
+        extensions.onDidChange(
             () => {
                 // If we just installed the Python extension and we fetched the controllers, then fetch it again.
                 if (
                     !this.wasPythonInstalledWhenFetchingControllers &&
                     this.extensionChecker.isPythonExtensionInstalled
                 ) {
-                    this.loadData().then(noop, noop);
+                    this.updateCache();
                 }
             },
             this,
             this.disposables
         );
-        this.nonPythonKernelFinder.onDidChangeKernels(() => this.loadData().then(noop, noop), this, this.disposables);
-        this.pythonKernelFinder.onDidChangeKernels(() => this.loadData().then(noop, noop), this, this.disposables);
+        this.nonPythonKernelFinder.onDidChangeKernels(this.updateCache, this, this.disposables);
+        this.pythonKernelFinder.onDidChangeKernels(this.updateCache, this, this.disposables);
         this.wasPythonInstalledWhenFetchingControllers = this.extensionChecker.isPythonExtensionInstalled;
     }
 
@@ -130,20 +127,14 @@ export class ContributedLocalKernelSpecFinder
         const promise = (async () => {
             await this.nonPythonKernelFinder.refresh();
             await this.pythonKernelFinder.refresh();
-            await this.updateCache();
+            this.updateCache();
         })();
         this.promiseMonitor.push(promise);
         await promise;
     }
 
-    private async loadData() {
-        const promise = this.updateCache();
-        this.promiseMonitor.push(promise);
-        await promise;
-    }
-
     @traceDecoratorError('List kernels failed')
-    private async updateCache() {
+    private updateCache() {
         try {
             let kernels: LocalKernelConnectionMetadata[] = [];
             // Exclude python kernel specs (we'll get that from the pythonKernelFinder)
@@ -159,7 +150,7 @@ export class ContributedLocalKernelSpecFinder
                 isUserRegisteredKernelSpecConnection(item)
             ) as LocalKernelConnectionMetadata[];
             kernels = kernels.concat(kernelSpecs).concat(kernelSpecsFromPythonKernelFinder);
-            await this.writeToCache(kernels);
+            this.writeToCache(kernels);
         } catch (ex) {
             traceError('Exception Saving loaded kernels', ex);
         }
@@ -185,27 +176,15 @@ export class ContributedLocalKernelSpecFinder
         });
         return kernels;
     }
-    private filterKernels(kernels: LocalKernelConnectionMetadata[]) {
-        return kernels.filter(({ kernelSpec }) => {
-            if (!kernelSpec) {
-                return true;
+    private writeToCache(values: LocalKernelConnectionMetadata[]) {
+        const uniqueIds = new Set<string>();
+        values = values.filter((item) => {
+            if (uniqueIds.has(item.id)) {
+                return false;
             }
-
+            uniqueIds.add(item.id);
             return true;
         });
-    }
-
-    private async writeToCache(values: LocalKernelConnectionMetadata[]) {
-        const uniqueIds = new Set<string>();
-        values = this.filterKernels(
-            values.filter((item) => {
-                if (uniqueIds.has(item.id)) {
-                    return false;
-                }
-                uniqueIds.add(item.id);
-                return true;
-            })
-        );
 
         const oldValues = this.cache;
         const oldKernels = new Map(oldValues.map((item) => [item.id, item]));
@@ -219,30 +198,6 @@ export class ContributedLocalKernelSpecFinder
         this.cache = values;
         if (added.length || updated.length || removed.length) {
             this._onDidChangeKernels.fire({ removed });
-        }
-
-        if (values.length) {
-            if (this.cacheLoggingTimeout) {
-                clearTimeout(this.cacheLoggingTimeout);
-            }
-            // Reduce the logging, as this can get written a lot,
-            this.cacheLoggingTimeout = setTimeout(
-                () => {
-                    traceVerbose(
-                        `Updating cache with Local kernels ${values
-                            .map((k) => `${k.kind}:'${k.id} (interpreter id = ${getDisplayPath(k.interpreter?.id)})'`)
-                            .join(', ')}, Added = ${added
-                            .map((k) => `${k.kind}:'${k.id} (interpreter id = ${getDisplayPath(k.interpreter?.id)})'`)
-                            .join(', ')}, Updated = ${updated
-                            .map((k) => `${k.kind}:'${k.id} (interpreter id = ${getDisplayPath(k.interpreter?.id)})'`)
-                            .join(', ')}, Removed = ${removed
-                            .map((k) => `${k.kind}:'${k.id} (interpreter id = ${getDisplayPath(k.interpreter?.id)})'`)
-                            .join(', ')}`
-                    );
-                },
-                isUnitTestExecution() ? 0 : 15_000
-            );
-            this.disposables.push(new Disposable(() => clearTimeout(this.cacheLoggingTimeout)));
         }
     }
 }

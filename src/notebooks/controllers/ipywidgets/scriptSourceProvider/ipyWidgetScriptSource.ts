@@ -4,12 +4,7 @@
 import type * as jupyterlabService from '@jupyterlab/services';
 import { Event, EventEmitter, NotebookDocument, Uri } from 'vscode';
 import { traceError, traceInfo, traceVerbose, traceWarning } from '../../../../platform/logging';
-import {
-    IDisposableRegistry,
-    IConfigurationService,
-    IHttpClient,
-    IDisposable
-} from '../../../../platform/common/types';
+import { IDisposableRegistry, IConfigurationService, IDisposable } from '../../../../platform/common/types';
 import { InteractiveWindowMessages, IPyWidgetMessages } from '../../../../messageTypes';
 import { sendTelemetryEvent, Telemetry } from '../../../../telemetry';
 import { IKernel, IKernelProvider } from '../../../../kernels/types';
@@ -19,8 +14,9 @@ import { ConsoleForegroundColors } from '../../../../platform/logging/types';
 import { noop } from '../../../../platform/common/utils/misc';
 import { createDeferred, Deferred } from '../../../../platform/common/utils/async';
 import { ScriptUriConverter } from './scriptUriConverter';
-import { ResourceMap } from '../../../../platform/vscode-path/map';
 import { CDNWidgetScriptSourceProvider } from './cdnWidgetScriptSourceProvider';
+import { ResourceMap } from '../../../../platform/common/utils/map';
+import { isWebExtension } from '../../../../platform/constants';
 
 /**
  * Handles messages from the kernel related to setting up widgets.
@@ -56,12 +52,10 @@ export class IPyWidgetScriptSource {
         private readonly kernelProvider: IKernelProvider,
         disposables: IDisposableRegistry,
         private readonly configurationSettings: IConfigurationService,
-        private readonly httpClient: IHttpClient,
         private readonly sourceProviderFactory: IWidgetScriptSourceProviderFactory,
-        isWebExtension: boolean,
         private readonly cdnScriptProvider: CDNWidgetScriptSourceProvider
     ) {
-        this.uriConverter = new ScriptUriConverter(isWebExtension, (resource) => {
+        this.uriConverter = new ScriptUriConverter(isWebExtension(), (resource) => {
             if (!this.uriTranslationRequests.has(resource))
                 this.uriTranslationRequests.set(resource, createDeferred<Uri>());
             this.postEmitter.fire({
@@ -124,14 +118,13 @@ export class IPyWidgetScriptSource {
         if (!this.kernel?.session) {
             return;
         }
-        if (this.scriptProvider) {
+        if (this.scriptProvider && !this.scriptProvider.isDisposed) {
             return;
         }
         this.scriptProvider = new IPyWidgetScriptSourceProvider(
             this.kernel,
             this.uriConverter,
             this.configurationSettings,
-            this.httpClient,
             this.sourceProviderFactory,
             this.isWebViewOnline.promise,
             this.cdnScriptProvider

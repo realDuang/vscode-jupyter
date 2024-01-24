@@ -6,7 +6,6 @@ import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { anything, instance, mock, when } from 'ts-mockito';
 import { EventEmitter, Memento } from 'vscode';
-import { IApplicationShell, IVSCodeNotebook } from '../platform/common/application/types';
 import { IConfigurationService, IDisposable, IExtensionContext } from '../platform/common/types';
 import { createEventHandler } from '../test/common';
 import { createKernelController, TestNotebookDocument } from '../test/datascience/notebook/executionHelper';
@@ -24,8 +23,6 @@ suite('Jupyter Session', () => {
         const asyncDisposables: { dispose: () => Promise<unknown> }[] = [];
         let sessionCreator: IKernelSessionFactory;
         let configService: IConfigurationService;
-        let appShell: IApplicationShell;
-        let vscNotebook: IVSCodeNotebook;
         let context: IExtensionContext;
         let jupyterServerUriStorage: IJupyterServerUriStorage;
         let metadata: KernelConnectionMetadata;
@@ -34,8 +31,6 @@ suite('Jupyter Session', () => {
         setup(() => {
             sessionCreator = mock<IKernelSessionFactory>();
             configService = mock<IConfigurationService>();
-            appShell = mock<IApplicationShell>();
-            vscNotebook = mock<IVSCodeNotebook>();
             context = mock<IExtensionContext>();
             jupyterServerUriStorage = mock<IJupyterServerUriStorage>();
             metadata = mock<KernelConnectionMetadata>();
@@ -55,8 +50,6 @@ suite('Jupyter Session', () => {
                 disposables,
                 instance(sessionCreator),
                 instance(configService),
-                instance(appShell),
-                instance(vscNotebook),
                 instance(context),
                 instance(jupyterServerUriStorage),
                 [],
@@ -73,8 +66,6 @@ suite('Jupyter Session', () => {
                 disposables,
                 instance(sessionCreator),
                 instance(configService),
-                instance(appShell),
-                instance(vscNotebook),
                 instance(registry),
                 instance(workspaceMemento)
             );

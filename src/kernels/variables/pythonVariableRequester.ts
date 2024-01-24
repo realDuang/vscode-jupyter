@@ -11,7 +11,7 @@ import { JupyterDataRateLimitError } from '../../platform/errors/jupyterDataRate
 import { Telemetry } from '../../telemetry';
 import { executeSilently, SilentExecutionErrorOptions } from '../helpers';
 import { IKernel } from '../types';
-import { IKernelVariableRequester, IJupyterVariable } from './types';
+import { IKernelVariableRequester, IJupyterVariable, IVariableDescription } from './types';
 import { IDataFrameScriptGenerator, IVariableScriptGenerator } from '../../platform/common/types';
 import { SessionDisposedError } from '../../platform/errors/sessionDisposedError';
 
@@ -130,7 +130,9 @@ export class PythonVariablesRequester implements IKernelVariableRequester {
                 telemetryName: Telemetry.PythonVariableFetchingCodeFailure
             }
         );
-
+        if (results.length === 0) {
+            return { data: [] };
+        }
         return parseDataFrame(this.deserializeJupyterResult<DataFrameSplitFormat>(results));
     }
 
@@ -144,6 +146,40 @@ export class PythonVariablesRequester implements IKernelVariableRequester {
             result[`${word}`] = matchingVariable.value;
         }
         return result;
+    }
+
+    public async getAllVariableDiscriptions(
+        kernel: IKernel,
+        parent: IVariableDescription | undefined,
+        startIndex: number,
+        token?: CancellationToken
+    ): Promise<IVariableDescription[]> {
+        if (!kernel.session) {
+            return [];
+        }
+
+        const { code, cleanupCode, initializeCode } =
+            await this.varScriptGenerator.generateCodeToGetAllVariableDescriptions({
+                isDebugging: false,
+                parent,
+                startIndex
+            });
+
+        const results = await safeExecuteSilently(
+            kernel,
+            { code, cleanupCode, initializeCode },
+            {
+                traceErrors: true,
+                traceErrorsMessage: 'Failure in execute_request when retrieving variables',
+                telemetryName: Telemetry.PythonVariableFetchingCodeFailure
+            }
+        );
+
+        if (kernel.disposed || kernel.disposing || token?.isCancellationRequested) {
+            return [];
+        }
+
+        return this.deserializeJupyterResult(results) as Promise<IVariableDescription[]>;
     }
 
     public async getVariableNamesAndTypesFromKernel(

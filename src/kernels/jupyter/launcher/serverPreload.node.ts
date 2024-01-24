@@ -2,9 +2,8 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, named } from 'inversify';
-import { CancellationTokenSource, Memento, NotebookDocument } from 'vscode';
+import { CancellationTokenSource, Memento, NotebookDocument, workspace } from 'vscode';
 import { IExtensionSyncActivationService } from '../../../platform/activation/types';
-import { IVSCodeNotebook, IWorkspaceService } from '../../../platform/common/application/types';
 import { PYTHON_LANGUAGE } from '../../../platform/common/constants';
 import { traceInfo, traceError } from '../../../platform/logging';
 import {
@@ -29,16 +28,14 @@ const LastNotebookCreatedKey = 'last-notebook-created';
 @injectable()
 export class ServerPreload implements IExtensionSyncActivationService {
     constructor(
-        @inject(IVSCodeNotebook) notebook: IVSCodeNotebook,
         @inject(IConfigurationService) private configService: IConfigurationService,
         @inject(IJupyterServerConnector) private serverConnector: IJupyterServerConnector,
-        @inject(IWorkspaceService) private readonly workspace: IWorkspaceService,
         @inject(IDisposableRegistry) private readonly disposables: IDisposableRegistry,
         @inject(IRawNotebookSupportedService) private readonly rawKernelSupport: IRawNotebookSupportedService,
         @inject(IMemento) @named(WORKSPACE_MEMENTO) private mementoStorage: Memento,
         @inject(IKernelProvider) private readonly kernelProvider: IKernelProvider
     ) {
-        notebook.onDidOpenNotebookDocument(this.onDidOpenNotebook.bind(this), this, disposables);
+        workspace.onDidOpenNotebookDocument(this.onDidOpenNotebook.bind(this), this, disposables);
     }
     public activate() {
         // This is the list of things that should cause us to start a local server
@@ -73,7 +70,7 @@ export class ServerPreload implements IExtensionSyncActivationService {
     }
 
     private async createServerIfNecessary() {
-        if (!this.workspace.isTrusted || this.rawKernelSupport.isSupported) {
+        if (!workspace.isTrusted || this.rawKernelSupport.isSupported) {
             return;
         }
         const source = new CancellationTokenSource();

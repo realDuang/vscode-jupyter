@@ -17,15 +17,8 @@ import {
     PythonKernelConnectionMetadata
 } from '../../kernels/types';
 import { IPythonExtensionChecker } from '../../platform/api/types';
-import {
-    IApplicationShell,
-    ICommandManager,
-    IDocumentManager,
-    IVSCodeNotebook,
-    IWorkspaceService
-} from '../../platform/common/application/types';
 import { dispose } from '../../platform/common/utils/lifecycle';
-import { IBrowserService, IConfigurationService, IDisposable, IExtensionContext } from '../../platform/common/types';
+import { IConfigurationService, IDisposable, IExtensionContext } from '../../platform/common/types';
 import { IInterpreterService } from '../../platform/interpreter/contracts';
 import { IServiceContainer } from '../../platform/ioc/types';
 import { EnvironmentType, PythonEnvironment } from '../../platform/pythonEnvironments/info';
@@ -34,6 +27,7 @@ import { ControllerRegistration } from './controllerRegistration';
 import { PythonEnvironmentFilter } from '../../platform/interpreter/filter/filterService';
 import { IConnectionDisplayDataProvider, IVSCodeNotebookController } from './types';
 import { VSCodeNotebookController } from './vscodeNotebookController';
+import { mockedVSCodeNamespaces } from '../../test/vscode-mock';
 
 suite('Controller Registration', () => {
     const activePythonEnv: PythonEnvironment = {
@@ -81,7 +75,6 @@ suite('Controller Registration', () => {
     });
     let clock: fakeTimers.InstalledClock;
     let disposables: IDisposable[] = [];
-    let vscNotebook: IVSCodeNotebook;
     let kernelFinder: IKernelFinder;
     let extensionChecker: IPythonExtensionChecker;
     let interpreters: IInterpreterService;
@@ -111,19 +104,13 @@ suite('Controller Registration', () => {
     let contributedLocalKernelFinder: IContributedKernelFinder;
     let contributedPythonKernelFinder: IContributedKernelFinder;
     let configService: IConfigurationService;
-    let commandManager: ICommandManager;
     let context: IExtensionContext;
     let kernelProvider: IKernelProvider;
     let languageService: NotebookCellLanguageService;
-    let workspace: IWorkspaceService;
-    let documentManager: IDocumentManager;
-    let appShell: IApplicationShell;
-    let browser: IBrowserService;
     let serviceContainer: IServiceContainer;
     let displayDataProvider: IConnectionDisplayDataProvider;
     let addOrUpdateCalled = false;
     setup(() => {
-        vscNotebook = mock<IVSCodeNotebook>();
         kernelFinder = mock<IKernelFinder>();
         extensionChecker = mock<IPythonExtensionChecker>();
         interpreters = mock<IInterpreterService>();
@@ -132,24 +119,14 @@ suite('Controller Registration', () => {
         contributedLocalKernelFinder = mock<IContributedKernelFinder>();
         contributedPythonKernelFinder = mock<IContributedKernelFinder>();
         configService = mock<IConfigurationService>();
-        commandManager = mock<ICommandManager>();
         context = mock<IExtensionContext>();
         kernelProvider = mock<IKernelProvider>();
         languageService = mock<NotebookCellLanguageService>();
-        workspace = mock<IWorkspaceService>();
-        documentManager = mock<IDocumentManager>();
-        appShell = mock<IApplicationShell>();
-        browser = mock<IBrowserService>();
         serviceContainer = mock<IServiceContainer>();
         displayDataProvider = mock<IConnectionDisplayDataProvider>();
         onDidChangeKernels = new EventEmitter<void>();
         disposables.push(onDidChangeKernels);
-        when(serviceContainer.get<ICommandManager>(ICommandManager)).thenReturn(instance(commandManager));
         when(serviceContainer.get<IConfigurationService>(IConfigurationService)).thenReturn(instance(configService));
-        when(serviceContainer.get<IApplicationShell>(IApplicationShell)).thenReturn(instance(appShell));
-        when(serviceContainer.get<IBrowserService>(IBrowserService)).thenReturn(instance(browser));
-        when(serviceContainer.get<IWorkspaceService>(IWorkspaceService)).thenReturn(instance(workspace));
-        when(serviceContainer.get<IDocumentManager>(IDocumentManager)).thenReturn(instance(documentManager));
         when(serviceContainer.get<IConnectionDisplayDataProvider>(IConnectionDisplayDataProvider)).thenReturn(
             instance(displayDataProvider)
         );
@@ -209,7 +186,7 @@ suite('Controller Registration', () => {
         when(kernelFinder.kernels).thenReturn([]);
         when(interpreters.resolvedEnvironments).thenReturn([activePythonEnv]);
         when(kernelFilter.isPythonEnvironmentExcluded(anything())).thenReturn(false);
-        when(vscNotebook.notebookDocuments).thenReturn([]);
+        when(mockedVSCodeNamespaces.workspace.notebookDocuments).thenReturn([]);
         when(extensionChecker.isPythonExtensionInstalled).thenReturn(true);
         when(interpreters.getActiveInterpreter(anything())).thenResolve(activePythonEnv);
 
@@ -225,10 +202,8 @@ suite('Controller Registration', () => {
         suite(`${web ? 'Web' : 'Desktop'}`, () => {
             setup(() => {
                 registration = new ControllerRegistration(
-                    instance(vscNotebook),
                     disposables,
                     instance(kernelFilter),
-                    instance(workspace),
                     instance(extensionChecker),
                     instance(serviceContainer),
                     instance(serverUriStorage),
@@ -335,13 +310,7 @@ suite('Controller Registration', () => {
                         _arg7,
                         _arg8,
                         _arg9,
-                        _arg10,
-                        _arg11,
-                        _arg12,
-                        _arg13,
-                        _arg14,
-                        _arg15,
-                        _arg16
+                        _arg10
                     ) => {
                         if (connection === activePythonConnection) {
                             when(activeInterpreterController.id).thenReturn(id);
@@ -420,13 +389,7 @@ suite('Controller Registration', () => {
                         _arg7,
                         _arg8,
                         _arg9,
-                        _arg10,
-                        _arg11,
-                        _arg12,
-                        _arg13,
-                        _arg14,
-                        _arg15,
-                        _arg16
+                        _arg10
                     ) => {
                         if (connection === activePythonConnection) {
                             when(activeInterpreterController.id).thenReturn(id);

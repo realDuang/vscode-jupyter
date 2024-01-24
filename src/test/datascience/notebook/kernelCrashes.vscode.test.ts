@@ -7,15 +7,8 @@ import * as fs from 'fs-extra';
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { DataScience } from '../../../platform/common/utils/localize';
-import {
-    IApplicationShell,
-    ICommandManager,
-    IDocumentManager,
-    IVSCodeNotebook,
-    IWorkspaceService
-} from '../../../platform/common/application/types';
 import { traceInfo } from '../../../platform/logging';
-import { IBrowserService, IConfigurationService, IDisposable, IExtensionContext } from '../../../platform/common/types';
+import { IConfigurationService, IDisposable, IExtensionContext } from '../../../platform/common/types';
 import { captureScreenShot, IExtensionTestApi, waitForCondition } from '../../common.node';
 import { initialize } from '../../initialize.node';
 import {
@@ -37,13 +30,13 @@ import { createDeferred } from '../../../platform/common/utils/async';
 import { noop, sleep } from '../../core';
 import { getDisplayNameOrNameOfKernelConnection } from '../../../kernels/helpers';
 import {
-    Disposable,
     EventEmitter,
     NotebookCell,
     NotebookController,
     NotebookDocument,
     NotebookEditor,
     Uri,
+    notebooks,
     window,
     workspace
 } from 'vscode';
@@ -60,6 +53,7 @@ import { instance, mock, when } from 'ts-mockito';
 import { IPlatformService } from '../../../platform/common/platform/types';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
 import { ConnectionDisplayDataProvider } from '../../../notebooks/controllers/connectionDisplayData.node';
+import { IJupyterVariables } from '../../../kernels/variables/types';
 
 const codeToKillKernel = dedent`
 import IPython
@@ -71,11 +65,10 @@ app.kernel.do_shutdown(True)
 suite('VSCode Notebook Kernel Error Handling - @kernelCore', function () {
     let api: IExtensionTestApi;
     const disposables: IDisposable[] = [];
-    let vscodeNotebook: IVSCodeNotebook;
     let kernelProvider: IKernelProvider;
     let notebook: TestNotebookDocument;
     const kernelCrashFailureMessageInCell =
-        'The Kernel crashed while executing code in the the current cell or a previous cell. Please review the code in the cell(s) to identify a possible cause of the failure';
+        'The Kernel crashed while executing code in the current cell or a previous cell.';
     this.timeout(120_000);
     let kernelConnectionMetadata: KernelConnectionMetadata;
     // let kernel: IKernel;
@@ -95,31 +88,23 @@ suite('VSCode Notebook Kernel Error Handling - @kernelCore', function () {
             kernelProvider = api.serviceContainer.get<IKernelProvider>(IKernelProvider);
             await startJupyterServer();
             sinon.restore();
-            vscodeNotebook = api.serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
             const context = api.serviceContainer.get<IExtensionContext>(IExtensionContext);
             const languageService = api.serviceContainer.get<NotebookCellLanguageService>(NotebookCellLanguageService);
-            const commandManager = api.serviceContainer.get<ICommandManager>(ICommandManager);
-            const documentManager = api.serviceContainer.get<IDocumentManager>(IDocumentManager);
-            const workspaceService = api.serviceContainer.get<IWorkspaceService>(IWorkspaceService);
             const configuration = api.serviceContainer.get<IConfigurationService>(IConfigurationService);
-            const appShell = api.serviceContainer.get<IApplicationShell>(IApplicationShell);
             const extensionChecker = api.serviceContainer.get<IPythonExtensionChecker>(IPythonExtensionChecker);
             const providerRegitry =
                 api.serviceContainer.get<IJupyterServerProviderRegistry>(IJupyterServerProviderRegistry);
-            const browser = api.serviceContainer.get<IBrowserService>(IBrowserService);
             const platform = api.serviceContainer.get<IPlatformService>(IPlatformService);
             const interpreters = api.serviceContainer.get<IInterpreterService>(IInterpreterService);
+            const jupyterVariables = mock<IJupyterVariables>();
             kernelConnectionMetadata = await getDefaultKernelConnection();
             const displayDataProvider = new ConnectionDisplayDataProvider(
-                workspaceService,
                 platform,
                 providerRegitry,
                 disposables,
                 interpreters
             );
-            const createNbController = sinon.stub(vscodeNotebook, 'createNotebookController');
-            disposables.push(new Disposable(() => createNbController.restore()));
-            createNbController.callsFake((id, _view, _label, handler) => {
+            sinon.stub(notebooks, 'createNotebookController').callsFake((id, _view, _label, handler) => {
                 cellExecutionHandler = handler!;
                 const nbController = mock<NotebookController>();
                 const onDidChangeSelectedNotebooks = new EventEmitter<{
@@ -150,20 +135,15 @@ suite('VSCode Notebook Kernel Error Handling - @kernelCore', function () {
                 kernelConnectionMetadata,
                 kernelConnectionMetadata.id,
                 JupyterNotebookView,
-                vscodeNotebook,
-                commandManager,
                 kernelProvider,
                 context,
                 disposables,
                 languageService,
-                workspaceService,
                 configuration,
-                documentManager,
-                appShell,
-                browser,
                 extensionChecker,
                 api.serviceContainer,
-                displayDataProvider
+                displayDataProvider,
+                jupyterVariables
             );
             disposables.push(interpreterController);
 
@@ -195,7 +175,10 @@ suite('VSCode Notebook Kernel Error Handling - @kernelCore', function () {
         sinon.restore();
         traceInfo(`Ended Test (completed) ${this.currentTest?.title}`);
     });
-    suiteTeardown(() => closeNotebooksAndCleanUpAfterTests(disposables));
+    suiteTeardown(() => {
+        sinon.restore();
+        return closeNotebooksAndCleanUpAfterTests(disposables);
+    });
     suite('Raw Kernels', () => {
         setup(function () {
             if (IS_REMOTE_NATIVE_TEST() || IS_NON_RAW_NATIVE_TEST()) {
@@ -331,8 +314,7 @@ suite('VSCode Notebook Kernel Error Handling - @kernelCore', function () {
             assert.strictEqual(restartPrompt.getDisplayCount(), 1, 'Should only have one restart prompt');
         });
         async function createAndOpenTemporaryNotebookForKernelCrash(nbFileName: string) {
-            const { serviceContainer } = await initialize();
-            const vscodeNotebook = serviceContainer.get<IVSCodeNotebook>(IVSCodeNotebook);
+            await initialize();
             const nbFile = path.join(
                 EXTENSION_ROOT_DIR_FOR_TESTS,
                 `src/test/datascience/notebook/kernelFailures/overrideBuiltinModule/${nbFileName}`
@@ -342,8 +324,8 @@ suite('VSCode Notebook Kernel Error Handling - @kernelCore', function () {
             disposables.push({ dispose: () => fs.unlinkSync(nbFile) });
             // Open a python notebook and use this for all tests in this test suite.
             await openAndShowNotebook(Uri.file(nbFile));
-            assert.isOk(vscodeNotebook.activeNotebookEditor, 'No active notebook');
-            await waitForKernelToGetAutoSelected(vscodeNotebook.activeNotebookEditor!, PYTHON_LANGUAGE);
+            assert.isOk(window.activeNotebookEditor, 'No active notebook');
+            await waitForKernelToGetAutoSelected(window.activeNotebookEditor!, PYTHON_LANGUAGE);
         }
         async function displayErrorAboutOverriddenBuiltInModules() {
             await closeNotebooksAndCleanUpAfterTests(disposables);

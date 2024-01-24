@@ -70,7 +70,7 @@ export async function activatePylance(): Promise<INotebookLanguageClient | undef
         runPylance(pylanceExtension)
             .then(async (client) => {
                 if (!client) {
-                    vscode.window.showErrorMessage('Could not start Pylance').then(noop, noop);
+                    console.error('Could not start Pylance');
                     reject();
                     return;
                 }
