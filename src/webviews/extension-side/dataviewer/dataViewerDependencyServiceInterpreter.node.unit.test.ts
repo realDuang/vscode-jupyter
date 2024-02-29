@@ -3,7 +3,6 @@
 
 import { assert } from 'chai';
 import * as path from '../../../platform/vscode-path/path';
-import { SemVer } from 'semver';
 import { anything, deepEqual, instance, mock, verify, when } from 'ts-mockito';
 import { Common, DataScience } from '../../../platform/common/utils/localize';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
@@ -29,12 +28,8 @@ suite('DataViewerDependencyService (PythonEnvironment, Node)', () => {
     setup(async () => {
         resetVSCodeMocks();
         interpreter = {
-            displayName: '',
             id: Uri.file(path.join('users', 'python', 'bin', 'python.exe')).fsPath,
-            uri: Uri.file(path.join('users', 'python', 'bin', 'python.exe')),
-            sysPrefix: '',
-            sysVersion: '',
-            version: new SemVer('3.3.3')
+            uri: Uri.file(path.join('users', 'python', 'bin', 'python.exe'))
         };
         pythonExecService = mock<IPythonExecutionService>();
         installer = mock(ProductInstaller);

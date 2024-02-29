@@ -34,6 +34,16 @@ import { getTelemetrySafeHashedString } from '../../../platform/telemetry/helper
 import { isKernelLaunchedViaLocalPythonIPyKernel, isLikelyAPythonExecutable } from '../../helpers.node';
 import { LocalKnownPathKernelSpecFinder } from './localKnownPathKernelSpecFinder.node';
 import { areObjectsWithUrisTheSame, noop } from '../../../platform/common/utils/misc';
+import {
+    getCachedEnvironment,
+    getCachedEnvironments,
+    getCachedSysPrefix,
+    getCachedVersion,
+    getEnvironmentType,
+    getSysPrefix,
+    resolvedPythonEnvToJupyterEnv
+} from '../../../platform/interpreter/helpers';
+import { Environment } from '@vscode/python-extension';
 
 export function localPythonKernelsCacheKey() {
     const LocalPythonKernelsCacheKey = 'LOCAL_KERNEL_PYTHON_AND_RELATED_SPECS_CACHE_KEY_V_2023_3';
@@ -48,7 +58,12 @@ export async function findKernelSpecsInInterpreter(
     emitter: EventEmitter<IJupyterKernelSpec>
 ): Promise<void> {
     // Find all the possible places to look for this resource
-    const kernelSearchPath = Uri.file(path.join(interpreter.sysPrefix, baseKernelPath));
+    const sysPrefix = await getSysPrefix(interpreter);
+    if (!sysPrefix) {
+        traceWarning(`Failed to get sysPrefix for interpreter ${getDisplayPath(interpreter.id)}`);
+        return;
+    }
+    const kernelSearchPath = Uri.file(path.join(sysPrefix, baseKernelPath));
     const rootSpecPaths = await jupyterPaths.getKernelSpecRootPaths(cancelToken);
     if (cancelToken.isCancellationRequested) {
         return;
@@ -123,6 +138,9 @@ export async function findKernelSpecsInInterpreter(
 export class InterpreterSpecificKernelSpecsFinder extends DisposableBase {
     private cancelToken = new CancellationTokenSource();
     private kernelSpecPromise?: Promise<void>;
+    private lastKnownInterpreterVersion?: Environment['version'];
+    private lastKnownInterpreterSysPrefix?: string;
+    private lastKnownEnvFolder?: Uri;
     private _kernels = new Map<string, PythonKernelConnectionMetadata | LocalKernelConnectionMetadata>();
     private _onDidChangeKernels = this._register(
         new EventEmitter<{
@@ -139,6 +157,9 @@ export class InterpreterSpecificKernelSpecsFinder extends DisposableBase {
         private readonly kernelSpecFinder: LocalKernelSpecFinder
     ) {
         super();
+        this.lastKnownInterpreterVersion = getCachedVersion(interpreter);
+        this.lastKnownInterpreterSysPrefix = getCachedSysPrefix(interpreter);
+        this.lastKnownEnvFolder = getCachedEnvironment(interpreter)?.environment?.folderUri;
         this._register({ dispose: () => this.cancelToken.cancel() });
         this._register(this.cancelToken);
         this._register(this.interpreterService.onDidChangeInterpreter(this.clearCacheWhenInterpretersChange, this));
@@ -164,17 +185,21 @@ export class InterpreterSpecificKernelSpecsFinder extends DisposableBase {
     }
 
     private clearCacheWhenInterpretersChange() {
-        const interpreter = this.interpreterService.resolvedEnvironments.find((i) => i.id === this.interpreter.id);
+        const interpreter = getCachedEnvironment({ id: this.interpreter.id });
         if (!interpreter) {
             return;
         }
+        const version = getCachedVersion(interpreter);
+        const sysPrefix = getCachedSysPrefix(interpreter);
         if (
             // If the version, syspath has changed, then we need to re-discover the kernels.
-            this.interpreter.envPath !== interpreter.envPath ||
-            this.interpreter.version?.raw !== interpreter.version?.raw ||
-            this.interpreter.envType !== interpreter.envType ||
-            this.interpreter.sysPrefix !== interpreter.sysPrefix
+            this.lastKnownEnvFolder?.fsPath !== interpreter.environment?.folderUri?.fsPath ||
+            this.lastKnownInterpreterVersion?.sysVersion !== version?.sysVersion ||
+            getEnvironmentType(this.interpreter) !== getEnvironmentType(interpreter) ||
+            this.lastKnownInterpreterSysPrefix !== sysPrefix
         ) {
+            this.lastKnownInterpreterVersion = version;
+            this.lastKnownInterpreterSysPrefix = sysPrefix;
             this.listKernelSpecs(true).catch(noop);
         }
     }
@@ -339,9 +364,7 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
         kernelConnectionType: KernelConnectionMetadata['kind'],
         cancelToken?: CancellationToken
     ): Promise<PythonEnvironment | undefined> {
-        const interpreters = this.extensionChecker.isPythonExtensionInstalled
-            ? this.interpreterService.resolvedEnvironments
-            : [];
+        const interpreters = this.extensionChecker.isPythonExtensionInstalled ? getCachedEnvironments() : [];
 
         const pathInArgv =
             kernelSpec && Array.isArray(kernelSpec.argv) && kernelSpec.argv.length > 0 ? kernelSpec.argv[0] : undefined;
@@ -368,7 +391,7 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
         const exactMatch = interpreters.find((i) => {
             if (
                 kernelSpec.metadata?.interpreter?.path &&
-                areInterpreterPathsSame(Uri.file(kernelSpec.metadata.interpreter.path), i.uri)
+                areInterpreterPathsSame(Uri.file(kernelSpec.metadata.interpreter.path), i.executable.uri)
             ) {
                 traceVerbose(
                     `Kernel ${kernelSpec.name} matches ${getDisplayPath(i.id)} based on metadata.interpreter.`
@@ -378,7 +401,7 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
             return false;
         });
         if (exactMatch) {
-            return exactMatch;
+            return resolvedPythonEnvToJupyterEnv(exactMatch);
         }
         if (pathInArgv && path.basename(pathInArgv) === pathInArgv && kernelSpec.specFile && !isCreatedByUs) {
             sendTelemetryEvent(Telemetry.AmbiguousGlobalKernelSpec, undefined, {
@@ -394,7 +417,7 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
         if (pathInArgv && path.basename(pathInArgv) !== pathInArgv) {
             const pathInArgVUri = Uri.file(pathInArgv);
             const exactMatchBasedOnArgv = interpreters.find((i) => {
-                if (areInterpreterPathsSame(pathInArgVUri, i.uri)) {
+                if (areInterpreterPathsSame(pathInArgVUri, i.executable.uri)) {
                     traceVerbose(`Kernel ${kernelSpec.name} matches ${getDisplayPath(i.id)} based on argv.`);
                     return true;
                 }
@@ -412,7 +435,7 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
                         isCreatedByUs
                     });
                 }
-                return exactMatchBasedOnArgv;
+                return resolvedPythonEnvToJupyterEnv(exactMatchBasedOnArgv);
             }
 
             // 3. Sometimes we have path paths such as `/usr/bin/python3.6` in the kernel spec.
@@ -468,14 +491,17 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
         if (kernelSpec.interpreterPath) {
             const kernelSpecInterpreterPath = Uri.file(kernelSpec.interpreterPath);
             const matchBasedOnInterpreterPath = interpreters.find((i) => {
-                if (kernelSpec.interpreterPath && areInterpreterPathsSame(kernelSpecInterpreterPath, i.uri)) {
+                if (
+                    kernelSpec.interpreterPath &&
+                    areInterpreterPathsSame(kernelSpecInterpreterPath, i.executable.uri)
+                ) {
                     traceVerbose(`Kernel ${kernelSpec.name} matches ${getDisplayPath(i.id)} based on interpreterPath.`);
                     return true;
                 }
                 return false;
             });
             if (matchBasedOnInterpreterPath) {
-                return matchBasedOnInterpreterPath;
+                return resolvedPythonEnvToJupyterEnv(matchBasedOnInterpreterPath);
             }
             // Possible we still haven't discovered this interpreter, hence get the details from the Python extension.
             if (!kernelSpec.specFile || this.trustedKernels.isTrusted(Uri.file(kernelSpec.specFile))) {
@@ -492,24 +518,26 @@ export class GlobalPythonKernelSpecFinder implements IDisposable {
             return;
         }
 
-        return interpreters.find((i) => {
-            // 4. Check display name
-            if (kernelSpec.display_name === i.displayName) {
-                traceVerbose(`Kernel ${kernelSpec.name} matches ${getDisplayPath(i.id)} based on display name`);
-                // This is a bad one, matching by name is never going to be accurate
-                sendTelemetryEvent(Telemetry.AmbiguousGlobalKernelSpec, undefined, {
-                    kernelSpecHash,
-                    kernelConnectionType,
-                    pythonPathDefined: true,
-                    argv0: pathInArgv ? path.basename(pathInArgv) : '',
-                    pythonEnvFound: 'matchDisplayName',
-                    language: kernelSpecLanguage,
-                    isCreatedByUs
-                });
-                return true;
-            }
-            return false;
-        });
+        return resolvedPythonEnvToJupyterEnv(
+            interpreters.find((i) => {
+                // 4. Check display name
+                if (kernelSpec.display_name === getCachedEnvironment(i)?.environment?.name) {
+                    traceVerbose(`Kernel ${kernelSpec.name} matches ${getDisplayPath(i.id)} based on display name`);
+                    // This is a bad one, matching by name is never going to be accurate
+                    sendTelemetryEvent(Telemetry.AmbiguousGlobalKernelSpec, undefined, {
+                        kernelSpecHash,
+                        kernelConnectionType,
+                        pythonPathDefined: true,
+                        argv0: pathInArgv ? path.basename(pathInArgv) : '',
+                        pythonEnvFound: 'matchDisplayName',
+                        language: kernelSpecLanguage,
+                        isCreatedByUs
+                    });
+                    return true;
+                }
+                return false;
+            })
+        );
     }
     private listGlobalPythonKernelSpecs(): LocalKernelSpecConnectionMetadata[] {
         return (this.lastKnownGlobalPythonKernelSpecs = this.kernelSpecsFromKnownLocations.kernels.filter(

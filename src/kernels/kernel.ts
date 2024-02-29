@@ -63,6 +63,7 @@ import type { IAnyMessageArgs } from '@jupyterlab/services/lib/kernel/kernel';
 import { getKernelInfo } from './kernelInfo';
 import { KernelInterruptTimeoutError } from './errors/kernelInterruptTimeoutError';
 import { dispose } from '../platform/common/utils/lifecycle';
+import { getCachedVersion, getEnvironmentType, getPythonEnvDisplayName } from '../platform/interpreter/helpers';
 
 const widgetVersionOutPrefix = 'e976ee50-99ed-4aba-9b6b-9dcd5634d07d:IPyWidgets:';
 /**
@@ -583,10 +584,11 @@ abstract class BaseKernel implements IBaseKernel {
             if (interpreter) {
                 const info: string[] = [];
                 info.push(`Python Path: ${getDisplayPath(interpreter.uri)}`);
-                info.push(interpreter.envType || '');
-                info.push(interpreter.envName || '');
-                if (interpreter.version) {
-                    info.push(`${interpreter.version.major}.${interpreter.version.minor}.${interpreter.version.patch}`);
+                info.push(interpreter ? getEnvironmentType(interpreter) : '');
+                info.push(getPythonEnvDisplayName(interpreter) || '');
+                const version = getCachedVersion(interpreter);
+                if (version) {
+                    info.push(`${version.major}.${version.minor}.${version.micro}`);
                 }
                 pythonInfo = ` (${info.filter((s) => s).join(', ')})`;
             }

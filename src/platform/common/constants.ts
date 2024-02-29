@@ -39,7 +39,8 @@ export namespace Settings {
     export const JupyterServerRemoteLaunchService = JVSC_EXTENSION_ID;
     export const JupyterServerUriListMax = 10;
     // If this timeout expires, ignore the completion request sent to Jupyter.
-    export const IntellisenseTimeout = 2000;
+    export var IntellisenseTimeout = 2_000;
+    export const IntellisenseResolveTimeout = 5_000;
 }
 
 export let isCI = false;
@@ -379,7 +380,6 @@ export enum Telemetry {
     CellOutputMimeType = 'DS_INTERNAL.CELL_OUTPUT_MIME_TYPE',
     JupyterApiUsage = 'DATASCIENCE.JUPYTER_API_USAGE',
     KernelCodeCompletion = 'DATASCIENCE.JUPYTER_KERNEL_CODE_COMPLETION',
-    KernelCodeCompletionResolve = 'DATASCIENCE.JUPYTER_KERNEL_CODE_COMPLETION_RESOLVE',
     KernelCodeCompletionCannotResolve = 'DATASCIENCE.JUPYTER_KERNEL_CODE_COMPLETION_CANNOT_RESOLVE',
     JupyterKernelApiUsage = 'DATASCIENCE.JUPYTER_KERNEL_API_USAGE',
     NewJupyterKernelApiUsage = 'DATASCIENCE.JUPYTER_NEW_KERNEL_API_USAGE',

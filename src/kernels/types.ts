@@ -33,7 +33,7 @@ import {
 } from '../platform/common/constants';
 import { sendTelemetryEvent } from '../telemetry';
 import { generateIdFromRemoteProvider } from './jupyter/jupyterUtils';
-import { traceInfoIfCI } from '../platform/logging';
+import { getEnvironmentType } from '../platform/interpreter/helpers';
 
 export type WebSocketData = string | Buffer | ArrayBuffer | Buffer[];
 
@@ -287,13 +287,6 @@ export class PythonKernelConnectionMetadata {
         };
     }
     public updateInterpreter(interpreter: PythonEnvironment) {
-        if (!interpreter.sysPrefix) {
-            traceInfoIfCI(
-                `WARNING: Interpreter ${interpreter.id} has no sysPrefix and existing item ${
-                    this.interpreter.sysPrefix
-                } will be blown away, ${new Error().stack}`
-            );
-        }
         Object.assign(this.interpreter, interpreter);
     }
     public static fromJSON(options: Record<string, unknown> | PythonKernelConnectionMetadata) {
@@ -441,6 +434,7 @@ export interface INotebookKernelExecution {
     readonly executionCount: number;
     readonly onPreExecute: Event<NotebookCell>;
     readonly onPostExecute: Event<NotebookCell>;
+    readonly onDidRecieveDisplayUpdate: Event<NotebookCellOutput>;
     /**
      * Cells that are still being executed (or pending).
      */
@@ -951,7 +945,7 @@ function sendKernelTelemetry(kernel: KernelConnectionMetadata) {
                 providerExtensionId,
                 kernelConnectionType: kernel.kind,
                 kernelLanguage: language,
-                envType: interpreter?.envType,
+                envType: interpreter && getEnvironmentType(interpreter),
                 isArgv0SameAsInterpreter,
                 argv0,
                 argv

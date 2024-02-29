@@ -85,6 +85,7 @@ import { openInBrowser } from '../../platform/common/net/browser';
 import { KernelError } from '../../kernels/errors/kernelError';
 import { JupyterVariablesProvider } from '../../kernels/variables/JupyterVariablesProvider';
 import { IJupyterVariables } from '../../kernels/variables/types';
+import { getVersion } from '../../platform/interpreter/helpers';
 
 /**
  * Our implementation of the VSCode Notebook Controller. Called by VS code to execute cells in a notebook. Also displayed
@@ -212,7 +213,9 @@ export class VSCodeNotebookController implements Disposable, IVSCodeNotebookCont
         this.controller.interruptHandler = this.handleInterrupt.bind(this);
         this.controller.supportsExecutionOrder = true;
         this.controller.supportedLanguages = this.languageService.getSupportedLanguages(kernelConnection);
-        this.controller.variableProvider = new JupyterVariablesProvider(jupyterVariables, this.kernelProvider);
+        if (this.controller.supportedLanguages.includes('python')) {
+            this.controller.variableProvider = new JupyterVariablesProvider(jupyterVariables, this.kernelProvider);
+        }
         // Hook up to see when this NotebookController is selected by the UI
         this.controller.onDidChangeSelectedNotebooks(this.onDidChangeSelectedNotebooks, this, this.disposables);
         workspace.onDidCloseNotebookDocument(
@@ -386,28 +389,6 @@ export class VSCodeNotebookController implements Disposable, IVSCodeNotebookCont
         // Notebook is trusted. Continue to execute cells
         await Promise.all(cells.map((cell) => this.executeCell(notebook, cell)));
     }
-    private warnWhenUsingOutdatedPython() {
-        const pyVersion = this.kernelConnection.interpreter?.version;
-        if (
-            !pyVersion ||
-            pyVersion.major >= 4 ||
-            (this.kernelConnection.kind !== 'startUsingLocalKernelSpec' &&
-                this.kernelConnection.kind !== 'startUsingPythonInterpreter')
-        ) {
-            return;
-        }
-
-        if (pyVersion.major < 3 || (pyVersion.major === 3 && pyVersion.minor <= 5)) {
-            window
-                .showWarningMessage(DataScience.warnWhenSelectingKernelWithUnSupportedPythonVersion, Common.learnMore)
-                .then((selection) => {
-                    if (selection !== Common.learnMore) {
-                        return;
-                    }
-                    return openInBrowser('https://aka.ms/jupyterUnSupportedPythonKernelVersions');
-                }, noop);
-        }
-    }
     private async onDidChangeSelectedNotebooks(event: { notebook: NotebookDocument; selected: boolean }) {
         traceInfoIfCI(
             `NotebookController selection event called for notebook ${event.notebook.uri.toString()} & controller ${
@@ -443,7 +424,7 @@ export class VSCodeNotebookController implements Disposable, IVSCodeNotebookCont
         if (!workspace.isTrusted) {
             return;
         }
-        this.warnWhenUsingOutdatedPython();
+        void warnWhenUsingOutdatedPython(this.kernelConnection);
         const deferred = createDeferred<void>();
         traceInfoIfCI(
             `Controller ${this.connection.kind}:${this.id} associated with nb ${getDisplayPath(event.notebook.uri)}`
@@ -758,5 +739,32 @@ async function updateNotebookDocumentMetadata(
             })
         ]);
         await workspace.applyEdit(edit);
+    }
+}
+
+export async function warnWhenUsingOutdatedPython(kernelConnection: KernelConnectionMetadata) {
+    const pyVersion = await getVersion(kernelConnection.interpreter, true);
+    const major = pyVersion?.major || 0;
+    const minor = pyVersion?.minor || 0;
+    if (
+        !pyVersion ||
+        major >= 4 ||
+        major <= 0 || // Invalid versions from Python extension
+        minor <= -1 || // Invalid versions from Python extension
+        (kernelConnection.kind !== 'startUsingLocalKernelSpec' &&
+            kernelConnection.kind !== 'startUsingPythonInterpreter')
+    ) {
+        return;
+    }
+
+    if (major < 3 || (major === 3 && minor <= 5)) {
+        window
+            .showWarningMessage(DataScience.warnWhenSelectingKernelWithUnSupportedPythonVersion, Common.learnMore)
+            .then((selection) => {
+                if (selection !== Common.learnMore) {
+                    return;
+                }
+                return openInBrowser('https://aka.ms/jupyterUnSupportedPythonKernelVersions');
+            }, noop);
     }
 }

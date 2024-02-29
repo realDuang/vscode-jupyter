@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import {
     l10n,
     CancellationToken,
@@ -11,22 +13,29 @@ import {
     workspace,
     NotebookDocument,
     Event,
-    EventEmitter
+    EventEmitter,
+    NotebookCellOutput
 } from 'vscode';
-import { Kernel, KernelStatus, Output } from '../../api';
-import { ServiceContainer } from '../../platform/ioc/container';
-import { IKernel, IKernelProvider, INotebookKernelExecution } from '../types';
-import { getDisplayNameOrNameOfKernelConnection } from '../helpers';
-import { IDisposable, IDisposableRegistry } from '../../platform/common/types';
-import { DisposableBase, dispose } from '../../platform/common/utils/lifecycle';
-import { noop } from '../../platform/common/utils/misc';
-import { getTelemetrySafeHashedString } from '../../platform/telemetry/helpers';
-import { Telemetry, sendTelemetryEvent } from '../../telemetry';
-import { StopWatch } from '../../platform/common/utils/stopWatch';
-import { Deferred, createDeferred, sleep } from '../../platform/common/utils/async';
-import { once } from '../../platform/common/utils/events';
-import { traceVerbose } from '../../platform/logging';
-import { PYTHON_LANGUAGE } from '../../platform/common/constants';
+import { Kernel, KernelStatus, Output } from '../../../api';
+import { ServiceContainer } from '../../../platform/ioc/container';
+import { IKernel, IKernelProvider, INotebookKernelExecution } from '../../../kernels/types';
+import { getDisplayNameOrNameOfKernelConnection, isPythonKernelConnection } from '../../../kernels/helpers';
+import { IDisposable, IDisposableRegistry } from '../../../platform/common/types';
+import { DisposableBase, dispose } from '../../../platform/common/utils/lifecycle';
+import { noop } from '../../../platform/common/utils/misc';
+import { getTelemetrySafeHashedString } from '../../../platform/telemetry/helpers';
+import { Telemetry, sendTelemetryEvent } from '../../../telemetry';
+import { StopWatch } from '../../../platform/common/utils/stopWatch';
+import { Deferred, createDeferred, sleep } from '../../../platform/common/utils/async';
+import { once } from '../../../platform/common/utils/events';
+import { traceVerbose } from '../../../platform/logging';
+import { JVSC_EXTENSION_ID, PYTHON_LANGUAGE } from '../../../platform/common/constants';
+import { ChatMime, generatePythonCodeToInvokeCallback } from '../../../kernels/chat/generator';
+import {
+    isDisplayIdTrackedForExtension,
+    trackDisplayDataForExtension
+} from '../../../kernels/execution/extensionDisplayDataTracker';
+import { getNotebookCellOutputMetadata } from '../../../kernels/execution/helpers';
 
 /**
  * Displays a progress indicator when 3rd party extensions execute code against a kernel.
@@ -136,6 +145,13 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
     public get onDidChangeStatus(): Event<KernelStatus> {
         return this._onDidChangeStatus.event;
     }
+    private readonly _onDidRecieveDisplayUpdate = this._register(new EventEmitter<NotebookCellOutput>());
+    public get onDidRecieveDisplayUpdate(): Event<NotebookCellOutput> {
+        if (![JVSC_EXTENSION_ID].includes(this.extensionId)) {
+            throw new Error(`Proposed API is not supported for extension ${this.extensionId}`);
+        }
+        return this._onDidRecieveDisplayUpdate.event;
+    }
     constructor(
         private readonly extensionId: string,
         private readonly kernel: IKernel,
@@ -149,7 +165,21 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
             kernel.kernelConnectionMetadata.kind === 'connectToLiveRemoteKernel'
                 ? PYTHON_LANGUAGE
                 : kernel.kernelConnectionMetadata.kernelSpec.language || PYTHON_LANGUAGE;
-        this._register(this.kernel.onStatusChanged(() => this._onDidChangeStatus.fire(this.kernel.status), this));
+        this._register(this.kernel.onStatusChanged(() => this._onDidChangeStatus.fire(this.kernel.status)));
+        this._register(
+            execution.onDidRecieveDisplayUpdate((output) => {
+                const session = this.kernel.session;
+                const metadata = getNotebookCellOutputMetadata(output);
+                if (
+                    metadata?.outputType === 'display_data' &&
+                    metadata?.transient?.display_id &&
+                    session &&
+                    isDisplayIdTrackedForExtension(this.extensionId, session, metadata?.transient?.display_id)
+                ) {
+                    this._onDidRecieveDisplayUpdate.fire(output);
+                }
+            })
+        );
         // Plain object returned to 3rd party extensions that cannot be modified or messed with.
         const that = this;
         this._api = Object.freeze({
@@ -157,8 +187,14 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
             get status() {
                 return that.kernel.status;
             },
-            onDidChangeStatus: that.onDidChangeStatus,
-            executeCode: (code: string, token: CancellationToken) => this.executeCode(code, token)
+            onDidChangeStatus: that.onDidChangeStatus.bind(this),
+            onDidRecieveDisplayUpdate: this.onDidRecieveDisplayUpdate.bind(this),
+            executeCode: (code: string, token: CancellationToken) => this.executeCode(code, token),
+            executeChatCode: (
+                code: string,
+                handlers: Record<string, (data?: string) => Promise<string | undefined>>,
+                token: CancellationToken
+            ) => this.executeChatCode(code, handlers, token)
         });
     }
     static createApiKernel(
@@ -173,6 +209,32 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
     }
 
     async *executeCode(code: string, token: CancellationToken): AsyncGenerator<Output, void, unknown> {
+        for await (const output of this.executeCodeInternal(code, undefined, token)) {
+            yield output;
+        }
+    }
+    async *executeChatCode(
+        code: string,
+        handlers: Record<string, (data?: string) => Promise<string | undefined>>,
+        token: CancellationToken
+    ): AsyncGenerator<Output, void, unknown> {
+        const allowedList = ['ms-vscode.dscopilot-agent', JVSC_EXTENSION_ID];
+        if (!allowedList.includes(this.extensionId.toLowerCase())) {
+            throw new Error(`Proposed API is not supported for extension ${this.extensionId}`);
+        }
+        if (!isPythonKernelConnection(this.kernel.kernelConnectionMetadata)) {
+            throw new Error('Chat code execution is only supported for Python kernels');
+        }
+        for await (const output of this.executeCodeInternal(code, handlers, token)) {
+            yield output;
+        }
+    }
+
+    async *executeCodeInternal(
+        code: string,
+        handlers: Record<string, (...data: any[]) => Promise<any>> = {},
+        token: CancellationToken
+    ): AsyncGenerator<Output, void, unknown> {
         if (!this.kernelAccess.accessAllowed) {
             throw new Error(l10n.t('Access to Jupyter Kernel has been revoked'));
         }
@@ -236,7 +298,7 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
             () => {
                 properties.requestSent = true;
                 measures.requestSentAfter = stopwatch.elapsedTime;
-                if (!token.isCancellationRequested) {
+                if (!token.isCancellationRequested && this.extensionId !== JVSC_EXTENSION_ID) {
                     const progress = (this.previousProgress = this.progress.show());
                     disposables.push(progress);
                 }
@@ -270,13 +332,81 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
 
         try {
             for await (const output of kernelExecution.executeCode(code, this.extensionId, events, token)) {
+                trackDisplayDataForExtension(this.extensionId, this.kernel.session, output);
                 output.items.forEach((output) => mimeTypes.add(output.mime));
-                yield output;
+                if (handlers && hasChatOutput(output)) {
+                    for await (const chatOutput of this.handleChatOutput(
+                        output,
+                        kernelExecution,
+                        events,
+                        mimeTypes,
+                        handlers,
+                        token
+                    )) {
+                        yield chatOutput;
+                    }
+                } else {
+                    yield output;
+                }
             }
         } finally {
             dispose(disposables);
         }
     }
+    async *handleChatOutput(
+        output: NotebookCellOutput,
+        kernelExecution: INotebookKernelExecution,
+        events: {
+            started: EventEmitter<void>;
+            executionAcknowledged: EventEmitter<void>;
+        },
+        mimeTypes: Set<string>,
+        handlers: Record<string, (data?: string) => Promise<string | undefined>> = {},
+        token: CancellationToken
+    ): AsyncGenerator<Output, void, unknown> {
+        const chatOutput = output.items.find((i) => i.mime === ChatMime);
+        if (!chatOutput) {
+            return;
+        }
+        type Metadata = {
+            id: string;
+            function: string;
+            dataIsNone: boolean;
+        };
+        const metadata: Metadata = (output.metadata || {})['metadata'];
+        const functionId = metadata.function;
+        const id = metadata.id;
+        const data = metadata.dataIsNone ? undefined : new TextDecoder().decode(chatOutput.data);
+        const handler = handlers[functionId];
+        if (!handler) {
+            throw new Error(`Chat Function ${functionId} not found`);
+        }
+        const result = await handler(data);
+
+        // Send the result back to the chat window.
+        const code = generatePythonCodeToInvokeCallback(id, result);
+        for await (const output of kernelExecution.executeCode(code, this.extensionId, events, token)) {
+            output.items.forEach((output) => mimeTypes.add(output.mime));
+            if (hasChatOutput(output)) {
+                for await (const chatOutput of this.handleChatOutput(
+                    output,
+                    kernelExecution,
+                    events,
+                    mimeTypes,
+                    handlers,
+                    token
+                )) {
+                    yield chatOutput;
+                }
+            } else {
+                yield output;
+            }
+        }
+    }
+}
+
+function hasChatOutput(output: NotebookCellOutput) {
+    return output.items.some((i) => i.mime === ChatMime);
 }
 
 async function sendApiTelemetry(extensionId: string, kernel: IKernel, pemUsed: keyof Kernel, executionCount: number) {

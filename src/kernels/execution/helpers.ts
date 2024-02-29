@@ -30,6 +30,8 @@ import {
 } from '../helpers';
 import { StopWatch } from '../../platform/common/utils/stopWatch';
 import { getExtensionSpecifcStack } from '../../platform/errors/errors';
+import { getCachedEnvironment, getVersion } from '../../platform/interpreter/helpers';
+import { base64ToUint8Array, uint8ArrayToBase64 } from '../../platform/common/utils/string';
 
 export enum CellOutputMimeTypes {
     error = 'application/vnd.code.notebook.error',
@@ -111,7 +113,7 @@ const orderOfMimeTypes = [
 function isEmptyVendoredMimeType(outputItem: NotebookCellOutputItem) {
     if (outputItem.mime.startsWith('application/vnd.')) {
         try {
-            return Buffer.from(outputItem.data).toString().length === 0;
+            return new TextDecoder().decode(outputItem.data).length === 0;
         } catch {}
     }
     return false;
@@ -163,13 +165,14 @@ export class NotebookCellStateTracker {
     }
 }
 
-export function traceCellMessage(cell: NotebookCell, message: string) {
+export function traceCellMessage(cell: NotebookCell, message: string | (() => string)) {
+    let messageToLog = typeof message === 'string' ? () => message : message;
     traceInfoIfCI(
         () =>
             `Cell Index:${cell.index}, of document ${uriPath.basename(
                 cell.notebook.uri
             )} with state:${NotebookCellStateTracker.getCellStatus(cell)}, exec: ${cell.executionSummary
-                ?.executionOrder}. ${message}. called from ${getExtensionSpecifcStack()}`
+                ?.executionOrder}. ${messageToLog()}. called from ${getExtensionSpecifcStack()}`
     );
 }
 
@@ -226,7 +229,8 @@ function getOutputMetadata(output: nbformat.IOutput): CellOutputMetadata {
         outputType: output.output_type
     };
     if (output.transient) {
-        metadata.transient = output.transient;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        metadata.transient = output.transient as any;
     }
 
     switch (output.output_type as nbformat.OutputType) {
@@ -242,6 +246,13 @@ function getOutputMetadata(output: nbformat.IOutput): CellOutputMetadata {
     }
 
     return metadata;
+}
+
+export function getNotebookCellOutputMetadata(output: {
+    items: NotebookCellOutputItem[];
+    metadata?: { [key: string]: unknown };
+}): CellOutputMetadata | undefined {
+    return output.metadata as CellOutputMetadata | undefined;
 }
 
 /**
@@ -323,7 +334,7 @@ type CellMetadata = {
  * Metadata we store in VS Code cell output items.
  * This contains the original metadata from the Jupyuter Outputs.
  */
-type CellOutputMetadata = {
+interface CellOutputMetadata {
     /**
      * Cell output metadata.
      */
@@ -340,7 +351,7 @@ type CellOutputMetadata = {
          */
         display_id?: string;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } & any;
+    };
     /**
      * Original cell output type
      */
@@ -356,7 +367,7 @@ type CellOutputMetadata = {
      * Whether to display the open plot icon.
      */
     __displayOpenPlotIcon?: boolean;
-};
+}
 
 export function translateCellErrorOutput(output: NotebookCellOutput): nbformat.IError {
     // it should have at least one output item
@@ -371,7 +382,7 @@ export function translateCellErrorOutput(output: NotebookCellOutput): nbformat.I
         };
     }
     const originalError: undefined | nbformat.IError = output.metadata?.originalError;
-    const value: Error = JSON.parse(Buffer.from(firstItem.data as Uint8Array).toString('utf8'));
+    const value: Error = JSON.parse(new TextDecoder().decode(firstItem.data));
     return {
         output_type: 'error',
         ename: value.name,
@@ -399,17 +410,7 @@ function convertOutputMimeToJupyterOutput(mime: string, value: Uint8Array) {
         } else if (mime.startsWith('image/') && mime !== 'image/svg+xml') {
             // Images in Jupyter are stored in base64 encoded format.
             // VS Code expects bytes when rendering images.
-            if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
-                return Buffer.from(value).toString('base64');
-            } else {
-                // https://developer.mozilla.org/en-US/docs/Glossary/Base64#solution_1_%E2%80%93_escaping_the_string_before_encoding_it
-                const stringValue = textDecoder.decode(value);
-                return btoa(
-                    encodeURIComponent(stringValue).replace(/%([0-9A-F]{2})/g, function (_match, p1) {
-                        return String.fromCharCode(Number.parseInt('0x' + p1));
-                    })
-                );
-            }
+            return uint8ArrayToBase64(value);
         } else if (
             mime.toLowerCase().startsWith('application/vnd.holoviews_load.v') &&
             mime.toLowerCase().endsWith('+json')
@@ -449,12 +450,7 @@ function convertJupyterOutputToBuffer(mime: string, value: unknown): NotebookCel
         } else if (mime.startsWith('image/') && typeof value === 'string' && mime !== 'image/svg+xml') {
             // Images in Jupyter are stored in base64 encoded format.
             // VS Code expects bytes when rendering images.
-            if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
-                return new NotebookCellOutputItem(Buffer.from(value, 'base64'), mime);
-            } else {
-                const data = Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-                return new NotebookCellOutputItem(data, mime);
-            }
+            return new NotebookCellOutputItem(base64ToUint8Array(value), mime);
         } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
             return NotebookCellOutputItem.text(JSON.stringify(value), mime);
         } else {
@@ -706,12 +702,11 @@ export async function updateNotebookMetadata(
         const interpreter = isPythonConnection
             ? getInterpreterFromKernelConnectionMetadata(kernelConnection)
             : undefined;
-        const version = interpreter?.version
-            ? `${interpreter.version.major}.${interpreter.version.minor}.${interpreter.version.patch}`
-            : '';
+        const versionInfo = await getVersion(interpreter);
+        const version = versionInfo ? `${versionInfo.major}.${versionInfo.minor}.${versionInfo.micro}` : '';
         if (
             interpreter &&
-            interpreter.version &&
+            versionInfo &&
             metadata &&
             metadata.language_info &&
             metadata.language_info.version !== version
@@ -736,7 +731,8 @@ export async function updateNotebookMetadata(
     if (kernelConnection?.kind === 'startUsingPythonInterpreter') {
         // Store interpreter name, we expect the kernel finder will find the corresponding interpreter based on this name.
         const kernelSpec = kernelConnection.kernelSpec;
-        let displayName = kernelSpec.display_name || kernelConnection.interpreter.displayName || '';
+        let displayName =
+            kernelSpec.display_name || getCachedEnvironment(kernelConnection.interpreter)?.environment?.name || '';
 
         // If kernel spec is generated by us, then always store `python3` in the notebook (so that its portable).
         // However if we've created a kernelspec that points to a real kernelspec in a Python environment, then use the name of that spec.
