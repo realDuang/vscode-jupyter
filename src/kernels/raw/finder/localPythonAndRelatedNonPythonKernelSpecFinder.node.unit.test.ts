@@ -25,7 +25,7 @@ import { noop } from '../../../platform/common/utils/misc';
 import { createInterpreterKernelSpec, getKernelId } from '../../helpers';
 import { deserializePythonEnvironment, serializePythonEnvironment } from '../../../platform/api/pythonApi';
 import { uriEquals } from '../../../test/datascience/helpers';
-import { traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import { sleep } from '../../../test/core';
 import { localPythonKernelsCacheKey } from './interpreterKernelSpecFinderHelper.node';
 import { mockedVSCodeNamespaces } from '../../../test/vscode-mock';
@@ -78,7 +78,7 @@ suite(`Local Python and related kernels`, async () => {
     let environments: PythonExtension['environments'];
 
     setup(async function () {
-        traceInfo(`Start Test (started) ${this.currentTest?.title}`);
+        logger.info(`Start Test (started) ${this.currentTest?.title}`);
         interpreterService = mock<IInterpreterService>();
         fs = mock<IFileSystemNode>();
         jupyterPaths = mock<JupyterPaths>();
@@ -113,6 +113,8 @@ suite(`Local Python and related kernels`, async () => {
         when(jupyterPaths.getKernelSpecRootPaths(anything())).thenResolve([]);
         when(jupyterPaths.getKernelSpecRootPath()).thenResolve(globalKernelRootPath);
         when(mockedVSCodeNamespaces.workspace.workspaceFolders).thenReturn([]);
+        when(mockedVSCodeNamespaces.env.appHost).thenReturn('');
+        when(mockedVSCodeNamespaces.env.remoteName).thenReturn('');
 
         whenKnownEnvironments(environments).thenReturn([]);
         whenResolveEnvironment(environments, 'python').thenResolve({
@@ -252,10 +254,10 @@ suite(`Local Python and related kernels`, async () => {
             );
         });
         disposables.push(new Disposable(() => loadKernelSpecStub.restore()));
-        traceInfo(`Start Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Start Test (completed) ${this.currentTest?.title}`);
     });
     teardown(async function () {
-        traceInfo(`Ended Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Ended Test (completed) ${this.currentTest?.title}`);
         await dispose(disposables);
     });
 
@@ -386,6 +388,7 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(1);
 
         assert.deepEqual(finder.kernels, [venvPythonKernel, condaKernel]);
@@ -419,6 +422,7 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(1);
 
         assert.deepEqual(
@@ -466,6 +470,7 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(1);
 
         assert.deepEqual(
@@ -492,6 +497,7 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(1);
 
         // We should have the cached kernels.
@@ -518,6 +524,7 @@ suite(`Local Python and related kernels`, async () => {
 
         onDidChangeInterpreters.fire([]);
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(1);
 
         assert.deepEqual(finder.kernels, [venvPythonKernel, condaKernel]);
@@ -550,6 +557,7 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(2);
 
         // The cached kernel should not be listed as the Python env returned by Python extension is more recent.
@@ -581,7 +589,9 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(2);
+        clock = fakeTimers.install();
         const numberOfTimesChangeEventTriggered = onDidChange.count;
 
         // Force some internal state change ('formatted' property will get updated)
@@ -606,6 +616,7 @@ suite(`Local Python and related kernels`, async () => {
         when(interpreterService.status).thenReturn('idle');
         onDidChangeInterpreters.fire([]);
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(numberOfTimesChangeEventTriggered + 1);
 
         // The cached kernel should no longer be listed anymore.
@@ -631,7 +642,9 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(2);
+        clock = fakeTimers.install();
         const numberOfTimesChangeEventTriggered = onDidChange.count;
 
         // Get around issue with uri comparisons...
@@ -651,6 +664,7 @@ suite(`Local Python and related kernels`, async () => {
 
         onDidChangeInterpreters.fire([]);
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(numberOfTimesChangeEventTriggered + 1);
 
         // We should no longer list the venv kernel.
@@ -676,7 +690,9 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(2);
+        clock = fakeTimers.install();
         const numberOfTimesChangeEventTriggered = onDidChange.count;
 
         // Get around issue with uri comparisons...
@@ -697,6 +713,7 @@ suite(`Local Python and related kernels`, async () => {
 
         onDidRemoveInterpreter.fire({ id: venvInterpreter.id });
         await clock.runAllAsync();
+        clock.uninstall();
         assert.strictEqual(onDidChange.count, numberOfTimesChangeEventTriggered + 1, 'Event not fired');
 
         // We should no longer list the venv kernel.
@@ -730,6 +747,7 @@ suite(`Local Python and related kernels`, async () => {
         finder.onDidChangeKernels(() => clock.runAllAsync().catch(noop));
         finder.activate();
         await clock.runAllAsync();
+        clock.uninstall();
         await onDidChange.assertFiredAtLeast(1);
 
         // Get around issue with uri comparisons...

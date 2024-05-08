@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import type * as nbformat from '@jupyterlab/nbformat';
 import * as path from '../platform/vscode-path/path';
 import {
     Event,
@@ -22,7 +21,7 @@ import {
     commands
 } from 'vscode';
 import { Commands, MARKDOWN_LANGUAGE, PYTHON_LANGUAGE, isWebExtension } from '../platform/common/constants';
-import { traceInfo, traceInfoIfCI, traceVerbose, traceWarning } from '../platform/logging';
+import { logger } from '../platform/logging';
 import { IFileSystem } from '../platform/common/platform/types';
 import uuid from 'uuid/v4';
 import { IConfigurationService, InteractiveWindowMode, Resource } from '../platform/common/types';
@@ -54,7 +53,6 @@ import {
 } from './editor-integration/types';
 import { IDataScienceErrorHandler } from '../kernels/errors/types';
 import { CellExecutionCreator } from '../kernels/execution/cellExecutionCreator';
-import { updateNotebookMetadata } from '../kernels/execution/helpers';
 import { chainWithPendingUpdates } from '../kernels/execution/notebookUpdater';
 import { generateMarkdownFromCodeLines, parseForComments } from '../platform/common/utils';
 import { KernelController } from '../kernels/kernelController';
@@ -193,7 +191,7 @@ export class InteractiveWindow implements IInteractiveWindow {
 
     public async ensureInitialized() {
         if (!this.notebookDocument) {
-            traceVerbose(`Showing Interactive editor to initialize codeGenerator from notebook document`);
+            logger.debug(`Showing Interactive editor to initialize codeGenerator from notebook document`);
             await this.showInteractiveEditor();
 
             if (!this.notebookDocument) {
@@ -212,7 +210,7 @@ export class InteractiveWindow implements IInteractiveWindow {
         if (this.controller.controller) {
             this.controller.startKernel().catch(noop);
         } else {
-            traceInfo('No controller selected for Interactive Window initialization');
+            logger.info('No controller selected for Interactive Window initialization');
             this.controller.setInfoMessageCell(DataScience.selectKernelForEditor);
         }
     }
@@ -240,7 +238,7 @@ export class InteractiveWindow implements IInteractiveWindow {
     }
 
     private async openNotebookDocument(): Promise<NotebookDocument> {
-        traceVerbose(`Opening notebook document ${this.notebookUri}`);
+        logger.debug(`Opening notebook document ${this.notebookUri}`);
         return await workspace.openNotebookDocument(this.notebookUri);
     }
 
@@ -258,12 +256,12 @@ export class InteractiveWindow implements IInteractiveWindow {
             try {
                 await execution.appendOutput(output);
             } catch (err) {
-                traceWarning(`Could not append error message "${output}" to cell: ${err}`);
+                logger.warn(`Could not append error message "${output}" to cell: ${err}`);
             } finally {
                 execution.end(false, notebookCell.executionSummary?.timing?.endTime);
             }
         } else {
-            traceInfo(`Could not append error message to cell "${output}"`);
+            logger.info(`Could not append error message to cell "${output}"`);
         }
     }
 
@@ -400,7 +398,7 @@ export class InteractiveWindow implements IInteractiveWindow {
         if (!this.controller || !this.notebookDocument) {
             return false;
         }
-        traceInfoIfCI('InteractiveWindow.ts.createExecutionPromise.start');
+        logger.ci('InteractiveWindow.ts.createExecutionPromise.start');
         // Kick of starting kernels early.
         const kernelPromise = this.controller.startKernel();
         const cell = await notebookCellPromise;
@@ -427,17 +425,17 @@ export class InteractiveWindow implements IInteractiveWindow {
                 );
                 this.interactiveWindowDebugger.enable(kernel);
             }
-            traceInfoIfCI('InteractiveWindow.ts.createExecutionPromise.kernel.executeCell');
+            logger.ci('InteractiveWindow.ts.createExecutionPromise.kernel.executeCell');
             const iwCellMetadata = getInteractiveCellMetadata(cell);
             const execution = this.kernelProvider.getKernelExecution(kernel!);
             success = await execution.executeCell(cell, iwCellMetadata?.generatedCode?.code).then(
                 () => true,
                 () => false
             );
-            traceInfoIfCI('InteractiveWindow.ts.createExecutionPromise.kernel.executeCell.finished');
+            logger.ci('InteractiveWindow.ts.createExecutionPromise.kernel.executeCell.finished');
         } finally {
             await detachKernel();
-            traceInfoIfCI('InteractiveWindow.ts.createExecutionPromise.end');
+            logger.ci('InteractiveWindow.ts.createExecutionPromise.end');
         }
 
         if (!success) {
@@ -586,16 +584,12 @@ export class InteractiveWindow implements IInteractiveWindow {
         if (!this.notebookDocument) {
             throw new Error('no notebook to export.');
         }
-        const { magicCommandsAsComments } = this.configuration.getSettings(this.owningResource);
-        const cells = generateCellsFromNotebookDocument(this.notebookDocument, magicCommandsAsComments);
+        const cells = generateCellsFromNotebookDocument(this.notebookDocument);
 
-        // Should be an array of cells
-        if (cells) {
-            // Bring up the export file dialog box
-            const uri = await new ExportDialog().showDialog(ExportFormat.ipynb, this.owningResource);
-            if (uri) {
-                await this.jupyterExporter?.exportToFile(cells, getFilePath(uri));
-            }
+        // Bring up the export file dialog box
+        const uri = await new ExportDialog().showDialog(ExportFormat.ipynb, this.owningResource);
+        if (uri) {
+            await this.jupyterExporter?.exportToFile(cells, getFilePath(uri));
         }
     }
 
@@ -605,12 +599,6 @@ export class InteractiveWindow implements IInteractiveWindow {
             throw new Error('An active kernel is required to export the notebook.');
         }
         const kernel = this.controller.kernel?.value;
-
-        // Pull out the metadata from our active notebook
-        const metadata: nbformat.INotebookMetadata = {};
-        if (kernel) {
-            await updateNotebookMetadata(metadata, kernel.kernelConnectionMetadata);
-        }
 
         let defaultFileName;
         if (this.submitters && this.submitters.length) {

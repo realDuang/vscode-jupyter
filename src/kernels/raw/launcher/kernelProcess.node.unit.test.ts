@@ -38,7 +38,7 @@ import { JupyterPaths } from '../finder/jupyterPaths.node';
 import { waitForCondition } from '../../../test/common.node';
 import { uriEquals } from '../../../test/datascience/helpers';
 import { IS_REMOTE_NATIVE_TEST } from '../../../test/constants';
-import { traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import { IPlatformService } from '../../../platform/common/platform/types';
 import { IPythonExecutionFactory, IPythonExecutionService } from '../../../platform/interpreter/types.node';
 import { createObservable } from '../../../platform/common/process/proc.node';
@@ -122,6 +122,9 @@ suite('kernel Process', () => {
                     when(
                         kernelEnvVarsService.getEnvironmentVariables(anything(), anything(), anything())
                     ).thenResolve();
+                    when(
+                        kernelEnvVarsService.getEnvironmentVariables(anything(), anything(), anything(), anything())
+                    ).thenResolve();
                     when(processService.execObservable(anything(), anything(), anything())).thenReturn({
                         dispose: noop,
                         out: observableOutput,
@@ -134,7 +137,7 @@ suite('kernel Process', () => {
                     });
                     const interrupter = {
                         handle: 1,
-                        dispose: () => Promise.resolve(),
+                        dispose: noop,
                         interrupt: () => Promise.resolve()
                     };
                     when(daemon.createInterrupter(anything(), anything())).thenResolve(interrupter);
@@ -453,12 +456,12 @@ suite('Kernel Process', () => {
                 });
 
                 // setup(async function () {
-                //     traceInfo(`Start Test ${this.currentTest?.title}`);
+                //     logger.info(`Start Test ${this.currentTest?.title}`);
                 // });
                 teardown(function () {
                     rewiremock.disable();
                     sinon.restore();
-                    traceInfo(`End Test Complete ${this.currentTest?.title}`);
+                    logger.info(`End Test Complete ${this.currentTest?.title}`);
                     disposables = dispose(disposables);
                 });
 
@@ -513,7 +516,7 @@ suite('Kernel Process', () => {
                     when(settings.enablePythonKernelLogging).thenReturn(false);
                     const interruptDaemon = mock<PythonKernelInterruptDaemon>();
                     when(interruptDaemon.createInterrupter(anything(), anything())).thenResolve({
-                        dispose: () => Promise.resolve(),
+                        dispose: noop,
                         interrupt: () => Promise.resolve(),
                         handle: 1
                     });

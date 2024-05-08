@@ -6,7 +6,7 @@ import { IConfigurationService, IDisposable, IDisposableRegistry } from '../../p
 import { DataScience } from '../../platform/common/utils/localize';
 import { noop } from '../../platform/common/utils/misc';
 import { InputFlowAction } from '../../platform/common/utils/multiStepInput';
-import { traceWarning } from '../../platform/logging';
+import { logger } from '../../platform/logging';
 import { sendTelemetryEvent, Telemetry } from '../../telemetry';
 import {
     IJupyterRequestAgentCreator,
@@ -65,7 +65,7 @@ export class JupyterPasswordConnect {
             }).then((value) => {
                 if (!value || (value.requiresPassword && Object.keys(value).length === 1)) {
                     // If we fail to get a valid password connect info, don't save the value
-                    traceWarning(`Password for ${newUrl} was invalid.`);
+                    logger.warn(`Password for ${newUrl} was invalid.`);
                     this.savedConnectInfo.delete(options.handle);
                 }
 
@@ -230,13 +230,32 @@ export class JupyterPasswordConnect {
     }
 
     private async needPassword(url: string): Promise<boolean> {
+        // Assume we're trying to connect to Jupyter Lab
+        let response = await this.makeRequest(addTrailingSlash(url), {
+            method: 'get',
+            redirect: 'follow',
+            headers: { Connection: 'keep-alive' }
+        });
+        if (response.status === 200 && response.redirected) {
+            if (response.url.toLowerCase().includes('/login?')) {
+                return true;
+            }
+            if (response.url.toLowerCase().includes('/lab?')) {
+                return false;
+            }
+        }
+        // This is most likely not a Jupyter Lab server
         // A jupyter server will redirect if you ask for the tree when a login is required
-        const response = await this.makeRequest(new URL('tree?', addTrailingSlash(url)).toString(), {
+        const treeUrl = new URL('tree?', addTrailingSlash(url)).toString();
+        response = await this.makeRequest(treeUrl, {
             method: 'get',
             redirect: 'manual',
             headers: { Connection: 'keep-alive' }
         });
-
+        if (response.status === 404) {
+            logger.error(`Jupyter Server not found at ${url}, got 404 for ${treeUrl}`);
+            return false;
+        }
         return response.status !== 200;
     }
 

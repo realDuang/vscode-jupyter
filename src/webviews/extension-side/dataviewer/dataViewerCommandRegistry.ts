@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { inject, injectable, named, optional } from 'inversify';
-import { DebugConfiguration, Uri, commands, window, workspace } from 'vscode';
+import { DebugConfiguration, Memento, Uri, commands, window, workspace } from 'vscode';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import { convertDebugProtocolVariableToIJupyterVariable } from '../../../kernels/variables/helpers';
 import { IJupyterVariable, IJupyterVariables } from '../../../kernels/variables/types';
@@ -11,12 +11,19 @@ import { ICommandNameArgumentTypeMapping } from '../../../commands';
 import { IDebugService } from '../../../platform/common/application/types';
 import { Commands, Identifiers, JupyterNotebookView, Telemetry } from '../../../platform/common/constants';
 import { IPlatformService } from '../../../platform/common/platform/types';
-import { IConfigurationService, IDisposableRegistry } from '../../../platform/common/types';
+import {
+    Experiments,
+    GLOBAL_MEMENTO,
+    IConfigurationService,
+    IDisposableRegistry,
+    IExperimentService,
+    IMemento
+} from '../../../platform/common/types';
 import { DataScience } from '../../../platform/common/utils/localize';
 import { noop } from '../../../platform/common/utils/misc';
 import { untildify } from '../../../platform/common/utils/platform';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
-import { traceError, traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import { sendTelemetryEvent } from '../../../telemetry';
 import { EventName } from '../../../platform/telemetry/constants';
 import { IDataScienceErrorHandler } from '../../../kernels/errors/types';
@@ -26,6 +33,8 @@ import { PythonEnvironment } from '../../../platform/pythonEnvironments/info';
 import { IKernelProvider } from '../../../kernels/types';
 import { IInteractiveWindowProvider } from '../../../interactive-window/types';
 import { IShowDataViewerFromVariablePanel } from '../../../messageTypes';
+
+export const PromptAboutDeprecation = 'ds_prompt_about_deprecation';
 
 @injectable()
 export class DataViewerCommandRegistry implements IExtensionSyncActivationService {
@@ -49,7 +58,9 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
         @inject(IInterpreterService) @optional() private readonly interpreterService: IInterpreterService | undefined,
         @inject(IPlatformService) private readonly platformService: IPlatformService,
         @inject(IKernelProvider) private readonly kernelProvider: IKernelProvider,
-        @inject(IInteractiveWindowProvider) private interactiveWindowProvider: IInteractiveWindowProvider
+        @inject(IInteractiveWindowProvider) private interactiveWindowProvider: IInteractiveWindowProvider,
+        @inject(IExperimentService) private readonly experimentService: IExperimentService,
+        @inject(IMemento) @named(GLOBAL_MEMENTO) private readonly globalMemento: Memento
     ) {
         this.dataViewerChecker = new DataViewerChecker(configService);
         if (!workspace.isTrusted) {
@@ -76,6 +87,26 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
     private async onVariablePanelShowDataViewerRequest(request: IJupyterVariable | IShowDataViewerFromVariablePanel) {
         const requestVariable = 'variable' in request ? request.variable : request;
         sendTelemetryEvent(EventName.OPEN_DATAVIEWER_FROM_VARIABLE_WINDOW_REQUEST);
+
+        // DataViewerDeprecation
+        const deprecateDataViewer = this.experimentService.inExperiment(Experiments.DataViewerDeprecation);
+        if (!this.globalMemento.get(PromptAboutDeprecation) && deprecateDataViewer) {
+            this.globalMemento.update(PromptAboutDeprecation, true).then(noop, noop);
+
+            window
+                .showInformationMessage(
+                    DataScience.dataViewerDeprecationMessage,
+                    DataScience.dataViewerDeprecationRecommendationActionMessage
+                )
+                .then((action) => {
+                    if (action === DataScience.dataViewerDeprecationRecommendationActionMessage) {
+                        commands
+                            .executeCommand('workbench.extensions.search', '@tag:jupyterVariableViewers')
+                            .then(noop, noop);
+                    }
+                }, noop);
+        }
+
         if (
             this.debugService?.activeDebugSession &&
             this.variableProvider &&
@@ -114,7 +145,7 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
                 }
             } catch (e) {
                 sendTelemetryEvent(EventName.OPEN_DATAVIEWER_FROM_VARIABLE_WINDOW_ERROR, undefined, undefined, e);
-                traceError(e);
+                logger.error(e);
                 this.errorHandler.handleError(e).then(noop, noop);
             }
         } else {
@@ -132,7 +163,7 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
                     return await this.dataViewerFactory.create(jupyterVariableDataProvider, title);
                 }
             } catch (e) {
-                traceError(e);
+                logger.error(e);
                 sendTelemetryEvent(Telemetry.FailedShowDataViewer);
                 window.showErrorMessage(DataScience.showDataViewerFail).then(noop, noop);
             }
@@ -179,17 +210,17 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
     ): Promise<PythonEnvironment | undefined> {
         if (!this.interpreterService) {
             // Interpreter service is optional
-            traceInfo('Interpreter Service missing when trying getDebugAdapterPython');
+            logger.info('Interpreter Service missing when trying getDebugAdapterPython');
             return;
         }
 
         // Check debugAdapterPython and pythonPath
         let pythonPath: string = '';
         if (debugConfiguration.debugAdapterPython !== undefined) {
-            traceInfo('Found debugAdapterPython on Debug Configuration to use');
+            logger.info('Found debugAdapterPython on Debug Configuration to use');
             pythonPath = debugConfiguration.debugAdapterPython;
         } else if (debugConfiguration.pythonPath) {
-            traceInfo('Found pythonPath on Debug Configuration to use');
+            logger.info('Found pythonPath on Debug Configuration to use');
             pythonPath = debugConfiguration.pythonPath;
         }
 

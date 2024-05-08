@@ -5,7 +5,7 @@
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { commands, CompletionList, Position, Uri, window } from 'vscode';
-import { traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import { IDisposable } from '../../../platform/common/types';
 import { captureScreenShot, IExtensionTestApi, initialize, startJupyterServer, waitForCondition } from '../../common';
 import { closeActiveWindows } from '../../initialize';
@@ -58,7 +58,7 @@ suite('Remote Execution @kernelCore', function () {
     });
     // Use same notebook without starting kernel in every single test (use one for whole suite).
     setup(async function () {
-        traceInfo(`Start Test ${this.currentTest?.title}`);
+        logger.info(`Start Test ${this.currentTest?.title}`);
         sinon.restore();
         if (!this.currentTest?.title.includes('preferred')) {
             await startJupyterServer();
@@ -83,15 +83,15 @@ suite('Remote Execution @kernelCore', function () {
             ],
             disposables
         );
-        traceInfo(`Start Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Start Test (completed) ${this.currentTest?.title}`);
     });
     teardown(async function () {
-        traceInfo(`Ended Test ${this.currentTest?.title}`);
+        logger.info(`Ended Test ${this.currentTest?.title}`);
         if (this.currentTest?.isFailed()) {
             await captureScreenShot(this);
         }
         await closeNotebooksAndCleanUpAfterTests(disposables);
-        traceInfo(`Ended Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Ended Test (completed) ${this.currentTest?.title}`);
     });
     suiteTeardown(() => closeNotebooksAndCleanUpAfterTests(disposables));
     test('MRU and encrypted storage should be updated with remote Uri info', async function () {
@@ -213,7 +213,7 @@ export async function runCellAndVerifyUpdateOfPreferredRemoteKernelId(
     // If we nb it as soon as output appears, its possible the kernel id hasn't been saved yet & we mess that up.
     // Optionally we could wait for 100ms.
     await waitForCondition(
-        async () => !!(await remoteKernelIdProvider.getPreferredRemoteKernelId(nbEditor.notebook.uri)),
+        async () => !!(await remoteKernelIdProvider.getPreferredRemoteKernelId(nbEditor.notebook)),
         5_000,
         'Remote Kernel id not saved'
     );

@@ -31,7 +31,7 @@ import {
 import { JupyterRequestCreator } from '../jupyter/session/jupyterRequestCreator.node';
 import { waitForCondition } from '../../test/common';
 
-suite(`Cell Execution Message Handler`, () => {
+suite(`Cell Execution Message Handler`, async () => {
     let disposables: IDisposable[] = [];
     let controller: IKernelController;
     let context: IExtensionContext;
@@ -379,7 +379,12 @@ suite(`Cell Execution Message Handler`, () => {
         });
         test('Execute cell and add Display output', async () => {
             const notebook = createNotebook([
-                { kind: NotebookCellKind.Code, languageId: PYTHON_LANGUAGE, value: addDisplayDataOutput, outputs: [] },
+                {
+                    kind: NotebookCellKind.Code,
+                    languageId: PYTHON_LANGUAGE,
+                    value: addDisplayDataOutput,
+                    outputs: []
+                },
                 {
                     kind: NotebookCellKind.Code,
                     languageId: PYTHON_LANGUAGE,
@@ -440,7 +445,12 @@ suite(`Cell Execution Message Handler`, () => {
 
         test('Execute cell and add Display output (even if Cell DOM has not yet been updated) ', async () => {
             const notebook = createNotebook([
-                { kind: NotebookCellKind.Code, languageId: PYTHON_LANGUAGE, value: addDisplayDataOutput, outputs: [] },
+                {
+                    kind: NotebookCellKind.Code,
+                    languageId: PYTHON_LANGUAGE,
+                    value: addDisplayDataOutput,
+                    outputs: []
+                },
                 {
                     kind: NotebookCellKind.Code,
                     languageId: PYTHON_LANGUAGE,

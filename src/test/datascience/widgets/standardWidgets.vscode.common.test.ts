@@ -18,7 +18,7 @@ import {
     workspace,
     WorkspaceEdit
 } from 'vscode';
-import { traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import { IDisposable } from '../../../platform/common/types';
 import { captureScreenShot, startJupyterServer, waitForCondition } from '../../common';
 import { initialize } from '../../initialize';
@@ -111,17 +111,17 @@ suite('Standard IPyWidget Tests @widgets', function () {
     let editor: NotebookEditor;
     let comms: Utils;
     suiteSetup(async function () {
-        traceInfo('Suite Setup Standard IPyWidget Tests');
+        logger.info('Suite Setup Standard IPyWidget Tests');
         this.timeout(120_000);
         await initialize();
-        traceInfo('Suite Setup Standard IPyWidget Tests, Step 2');
+        logger.info('Suite Setup Standard IPyWidget Tests, Step 2');
         const config = workspace.getConfiguration('jupyter', undefined);
         await config.update('widgetScriptSources', widgetScriptSourcesValue, ConfigurationTarget.Global);
-        traceInfo('Suite Setup Standard IPyWidget Tests, Step 3');
+        logger.info('Suite Setup Standard IPyWidget Tests, Step 3');
         await startJupyterServer();
-        traceInfo('Suite Setup Standard IPyWidget Tests, Step 4');
+        logger.info('Suite Setup Standard IPyWidget Tests, Step 4');
         await prewarmNotebooks();
-        traceInfo('Suite Setup Standard IPyWidget Tests, Step 5');
+        logger.info('Suite Setup Standard IPyWidget Tests, Step 5');
         sinon.restore();
         editor = (await createEmptyPythonNotebook(disposables, undefined, true)).editor;
         await selectDefaultController(editor);
@@ -133,24 +133,24 @@ suite('Standard IPyWidget Tests @widgets', function () {
         await commands.executeCommand('notebook.cell.collapseAllCellInputs');
         comms = await initializeWidgetComms(disposables);
 
-        traceInfo('Suite Setup (completed)');
+        logger.info('Suite Setup (completed)');
     });
     // Use same notebook without starting kernel in every single test (use one for whole suite).
     setup(async function () {
-        traceInfo(`Start Test ${this.currentTest?.title}`);
+        logger.info(`Start Test ${this.currentTest?.title}`);
         sinon.restore();
         await startJupyterServer();
-        traceInfo(`Start Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Start Test (completed) ${this.currentTest?.title}`);
         // With less realestate, the outputs might not get rendered (VS Code optimization to avoid rendering if not in viewport).
         await commands.executeCommand('workbench.action.closePanel');
     });
     teardown(async function () {
-        traceInfo(`Ended Test ${this.currentTest?.title}`);
+        logger.info(`Ended Test ${this.currentTest?.title}`);
         if (this.currentTest?.isFailed()) {
             await captureScreenShot(this);
         }
         // await closeNotebooksAndCleanUpAfterTests(disposables);
-        traceInfo(`Ended Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Ended Test (completed) ${this.currentTest?.title}`);
     });
     suiteTeardown(async () => closeNotebooksAndCleanUpAfterTests(disposables));
     test('Slider Widget', async function () {
@@ -237,7 +237,7 @@ suite('Standard IPyWidget Tests @widgets', function () {
             await assertOutputContainsHtml(cell1, comms, ['Button clicked']);
             await assertOutputContainsHtml(cell2, comms, ['Button clicked']);
         });
-        test.skip('Button Widget with custom comm message', async () => {
+        test('Button Widget with custom comm message', async () => {
             await initializeNotebookForWidgetTest(
                 disposables,
                 {
@@ -348,7 +348,7 @@ suite('Standard IPyWidget Tests @widgets', function () {
             await assertOutputContainsHtml(cell1, comms, ['>Widgets are linked an get updated<'], '.widget-output');
             assert.strictEqual(cell3.outputs.length, 0, 'Cell 3 should not have any output');
         });
-        test.skip('More Nested Output Widgets', async () => {
+        test('More Nested Output Widgets', async () => {
             await initializeNotebookForWidgetTest(
                 disposables,
                 {
@@ -482,7 +482,7 @@ suite('Standard IPyWidget Tests @widgets', function () {
                 () => `Output doesn't contain text 'Bar' or still contains 'Outside, Inside, Foo', html is ${html}`
             );
         });
-        test.skip('Interactive Button', async () => {
+        test('Interactive Button', async () => {
             await initializeNotebookForWidgetTest(
                 disposables,
                 {
@@ -509,7 +509,7 @@ suite('Standard IPyWidget Tests @widgets', function () {
                     }`
             );
         });
-        test.skip('Interactive Function', async () => {
+        test('Interactive Function', async () => {
             await initializeNotebookForWidgetTest(
                 disposables,
                 {
@@ -539,7 +539,7 @@ suite('Standard IPyWidget Tests @widgets', function () {
             assert.strictEqual(getTextOutputValue(cell.outputs[1]).trim(), `Executing do_something with 'Hello World'`);
             assert.strictEqual(getTextOutputValue(cell.outputs[2]).trim(), `'Hello World'`);
         });
-        test.skip('Interactive Plot', async function () {
+        test('Interactive Plot', async function () {
             await initializeNotebookForWidgetTest(
                 disposables,
                 {

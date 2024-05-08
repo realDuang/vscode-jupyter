@@ -5,14 +5,13 @@ import type { Kernel, KernelMessage } from '@jupyterlab/services';
 import uuid from 'uuid/v4';
 import { Event, EventEmitter, NotebookDocument } from 'vscode';
 import type { Data as WebSocketData } from 'ws';
-import { traceVerbose, traceError } from '../../../../platform/logging';
+import { logger } from '../../../../platform/logging';
 import { Identifiers, WIDGET_MIMETYPE } from '../../../../platform/common/constants';
 import { IDisposable } from '../../../../platform/common/types';
 import { Deferred, createDeferred } from '../../../../platform/common/utils/async';
 import { noop } from '../../../../platform/common/utils/misc';
 import { deserializeDataViews, serializeDataViews } from '../../../../platform/common/utils/serializers';
 import { IPyWidgetMessages, IInteractiveWindowMapping } from '../../../../messageTypes';
-import { sendTelemetryEvent, Telemetry } from '../../../../telemetry';
 import { IKernel, IKernelProvider } from '../../../../kernels/types';
 import { IIPyWidgetMessageDispatcher, IPyWidgetMessage } from '../types';
 import { shouldMessageBeMirroredWithRenderer } from '../../../../kernels/kernel';
@@ -64,9 +63,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
     private pendingMessages: string[] = [];
     private subscribedToKernelSocket: boolean = false;
     private waitingMessageIds = new Map<string, PendingMessage>();
-    private totalWaitTime: number = 0;
-    private totalWaitedMessages: number = 0;
-    private hookCount: number = 0;
     /**
      * The Output widget's model can set up or tear down a kernel message hook on state change.
      * We need to wait until the kernel message hook has been connected before it's safe to send
@@ -111,8 +107,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
         this.deserialize = jupyterLabSerialize.deserialize;
     }
     public dispose() {
-        // Send overhead telemetry for our message hooking
-        this.sendOverheadTelemetry();
         this.disposed = true;
         while (this.disposables.length) {
             const disposable = this.disposables.shift();
@@ -125,9 +119,9 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
             case IPyWidgetMessages.IPyWidgets_logMessage: {
                 const payload: IInteractiveWindowMapping[IPyWidgetMessages.IPyWidgets_logMessage] = message.payload;
                 if (payload.category === 'error') {
-                    traceError(`Widget Error: ${payload.message}`);
+                    logger.error(`Widget Error: ${payload.message}`);
                 } else {
-                    traceVerbose(`Widget Message: ${payload.message}`);
+                    logger.trace(`Widget Message: ${payload.message}`);
                 }
                 break;
             }
@@ -192,7 +186,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
             this.subscribeToKernelSocket(kernel);
             this.registerCommTargets(kernel);
         }
-        traceVerbose('IPyWidgetMessageDispatcher.initialize');
     }
     protected raisePostMessage<M extends IInteractiveWindowMapping, T extends keyof IInteractiveWindowMapping>(
         message: IPyWidgetMessages,
@@ -275,7 +268,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
         // If this is shell control message, mirror to the other side. This is how
         // we get the kernel in the UI to have the same set of futures we have on this side
         if (typeof data === 'string' && data.includes('shell') && data.includes('execute_request')) {
-            const startTime = Date.now();
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const msg = this.deserialize(data) as KernelMessage.IExecuteRequestMsg;
             if (msg.channel === 'shell' && msg.header.msg_type === 'execute_request') {
@@ -287,8 +279,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
                 if (this.isUsingIPyWidgets) {
                     await promise;
                 }
-                this.totalWaitTime = Date.now() - startTime;
-                this.totalWaitedMessages += 1;
             }
         }
     }
@@ -391,8 +381,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
         const pending = this.waitingMessageIds.get(payload.id);
         if (pending) {
             this.waitingMessageIds.delete(payload.id);
-            this.totalWaitTime += Date.now() - pending.startTime;
-            this.totalWaitedMessages += 1;
             pending.resultPromise.resolve();
         }
     }
@@ -431,7 +419,7 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
                 // & not the widget (renderer/webview side) kernel
                 this.pendingMessages.shift();
             } catch (ex) {
-                traceError('Failed to send message to Kernel', ex);
+                logger.error('Failed to send message to Kernel', ex);
                 return;
             }
         }
@@ -449,7 +437,7 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
                 return;
             }
 
-            traceVerbose(`Registering commtarget ${targetName}`);
+            logger.trace(`Registering commtarget ${targetName}`);
             this.commTargetsRegistered.add(targetName);
             this.pendingTargetNames.delete(targetName);
 
@@ -498,7 +486,6 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
     private registerMessageHook(msgId: string) {
         try {
             if (this.kernel?.session?.kernel && !this.messageHooks.has(msgId)) {
-                this.hookCount += 1;
                 const callback = this.messageHookCallback.bind(this);
                 this.messageHooks.set(msgId, callback);
                 this.kernel.session.kernel.registerMessageHook(msgId, callback);
@@ -570,14 +557,5 @@ export class IPyWidgetMessageDispatcher implements IIPyWidgetMessageDispatcher {
             // During a comm message, make sure all messages come out.
             promise.resolve(args.msgType.includes('comm') ? true : args.result);
         }
-    }
-
-    private sendOverheadTelemetry() {
-        sendTelemetryEvent(Telemetry.IPyWidgetOverhead, {
-            totalOverheadInMs: this.totalWaitTime,
-            numberOfMessagesWaitedOn: this.totalWaitedMessages,
-            averageWaitTime: this.totalWaitTime / this.totalWaitedMessages,
-            numberOfRegisteredHooks: this.hookCount
-        });
     }
 }

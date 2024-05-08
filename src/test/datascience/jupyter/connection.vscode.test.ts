@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { IEncryptedStorage } from '../../../platform/common/application/types';
-import { traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import {
     IAsyncDisposableRegistry,
     IConfigurationService,
@@ -59,6 +59,7 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
     let jupyterLabWithHelloPasswordAndWorldToken = { url: '', dispose: noop };
     let jupyterNotebookWithHelloToken = { url: '', dispose: noop };
     let jupyterNotebookWithEmptyPasswordToken = { url: '', dispose: noop };
+    let jupyterLabWithEmptyPasswordAndEmptyToken = { url: '', dispose: noop };
     let jupyterLabWithHelloPasswordAndEmptyToken = { url: '', dispose: noop };
     suiteSetup(async function () {
         if (!IS_REMOTE_NATIVE_TEST()) {
@@ -74,6 +75,7 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
             jupyterLabWithHelloPasswordAndWorldToken,
             jupyterNotebookWithHelloToken,
             jupyterNotebookWithEmptyPasswordToken,
+            jupyterLabWithEmptyPasswordAndEmptyToken,
             jupyterLabWithHelloPasswordAndEmptyToken
         ] = await Promise.all([
             startJupyterServer({
@@ -112,6 +114,12 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
                 standalone: true
             }),
             startJupyterServer({
+                jupyterLab: true,
+                password: '',
+                token: '',
+                standalone: true
+            }),
+            startJupyterServer({
                 jupyterLab: false,
                 password: 'Hello',
                 token: '',
@@ -141,7 +149,7 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
         if (!IS_REMOTE_NATIVE_TEST()) {
             return this.skip();
         }
-        traceInfo(`Start Test ${this.currentTest?.title}`);
+        logger.info(`Start Test ${this.currentTest?.title}`);
         const api = await initialize();
         inputBox = {
             show: noop,
@@ -171,7 +179,7 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
             return new Disposable(noop);
         });
         sinon.stub(inputBox, 'onDidHide').callsFake(() => new Disposable(noop));
-        sinon.stub(commands, 'registerCommand').resolves();
+        sinon.stub(commands, 'registerCommand').returns({ dispose: noop });
         token = new CancellationTokenSource();
         disposables.push(new Disposable(() => token.cancel()));
         disposables.push(token);
@@ -208,14 +216,14 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
         );
         userUriProvider.activate();
 
-        traceInfo(`Start Test Completed ${this.currentTest?.title}`);
+        logger.info(`Start Test Completed ${this.currentTest?.title}`);
     });
 
     teardown(async function () {
-        traceInfo(`End Test ${this.currentTest?.title}`);
+        logger.info(`End Test ${this.currentTest?.title}`);
         sinon.restore();
         dispose(disposables);
-        traceInfo(`End Test Completed ${this.currentTest?.title}`);
+        logger.info(`End Test Completed ${this.currentTest?.title}`);
     });
     suiteTeardown(() => closeNotebooksAndCleanUpAfterTests(disposables));
 
@@ -352,11 +360,18 @@ suite('Connect to Remote Jupyter Servers @mandatory', function () {
         }));
     test('Connect to Lab server with Password & Token in URL', async () =>
         testConnectionAndVerifyBaseUrl({ userUri: jupyterLabWithHelloPasswordAndWorldToken.url, password: 'Hello' }));
-    test('Connect to server with empty Password & empty Token in URL', () =>
+    test('Connect to Notebook server with empty Password & empty Token in URL', () =>
         testConnectionAndVerifyBaseUrl({ userUri: jupyterNotebookWithEmptyPasswordToken.url, password: '' }));
-    test('Connect to server with empty Password & empty Token (nothing in URL)', () =>
+    test('Connect to Lab server with empty Password & empty Token in URL', () =>
+        testConnectionAndVerifyBaseUrl({ userUri: jupyterLabWithEmptyPasswordAndEmptyToken.url, password: '' }));
+    test('Connect to Notebook server with empty Password & empty Token (nothing in URL)', () =>
         testConnectionAndVerifyBaseUrl({
             userUri: `http://localhost:${new URL(jupyterNotebookWithEmptyPasswordToken.url).port}/`,
+            password: ''
+        }));
+    test('Connect to Lab server with empty Password & empty Token (nothing in URL)', () =>
+        testConnectionAndVerifyBaseUrl({
+            userUri: `http://localhost:${new URL(jupyterLabWithEmptyPasswordAndEmptyToken.url).port}/`,
             password: ''
         }));
     test('Connect to Lab server with Hello Password & empty Token (not even in URL)', () =>

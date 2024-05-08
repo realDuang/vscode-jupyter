@@ -20,19 +20,13 @@ import {
     workspace
 } from 'vscode';
 import { raceCancellation } from '../../platform/common/cancellation';
-import { traceInfo, traceInfoIfCI, traceVerbose, traceWarning } from '../../platform/logging';
-import {
-    Experiments,
-    IDisposable,
-    IDisposableRegistry,
-    IExperimentService,
-    Resource
-} from '../../platform/common/types';
+import { logger } from '../../platform/logging';
+import { IDisposable, IDisposableRegistry, Resource } from '../../platform/common/types';
 import { StopWatch } from '../../platform/common/utils/stopWatch';
 import { IKernelProvider, IKernel } from '../../kernels/types';
 import { INotebookEditorProvider } from '../../notebooks/types';
 import { mapJupyterKind } from './conversion';
-import { PYTHON_LANGUAGE, Settings, Telemetry } from '../../platform/common/constants';
+import { Settings, Telemetry } from '../../platform/common/constants';
 import { INotebookCompletion } from './types';
 import { translateKernelLanguageToMonaco } from '../../platform/common/utils';
 import { IExtensionSyncActivationService } from '../../platform/activation/types';
@@ -150,7 +144,7 @@ class NotebookCellSpecificKernelCompletionProvider implements CompletionItemProv
                 return [];
             }
             if (!(ex instanceof CancellationError)) {
-                traceVerbose(`Completions failed`, ex);
+                logger.debug(`Completions failed`, ex);
             }
             throw ex;
         } finally {
@@ -194,7 +188,7 @@ class NotebookCellSpecificKernelCompletionProvider implements CompletionItemProv
 
         properties.requestSent = true;
         const kernelCompletions = await raceCancellation(token, this.getKernelCompletion(code, cursor_pos, token));
-        traceVerbose(`Jupyter completion time: ${stopWatch.elapsedTime}`);
+        logger.debug(`Jupyter completion time: ${stopWatch.elapsedTime}`);
         properties.cancelled = token.isCancellationRequested;
         properties.completed = !token.isCancellationRequested;
         properties.kernelStatusAfterRequest = this.kernel.status;
@@ -418,8 +412,6 @@ class KernelSpecificCompletionProvider extends DisposableBase implements Complet
                 ) {
                     return;
                 }
-                this.completionProvider?.dispose();
-                this.completionProvider = undefined;
                 this.registerCompletionProvider();
             })
         );
@@ -435,12 +427,14 @@ class KernelSpecificCompletionProvider extends DisposableBase implements Complet
             return;
         }
 
-        traceInfo(
+        logger.trace(
             `Registering Kernel Completion Provider from kernel ${getDisplayNameOrNameOfKernelConnection(
                 this.kernel.kernelConnectionMetadata
             )} for language ${this.monacoLanguage}`
         );
         this.allowStringFilterForPython = triggerCharacters.includes("'") || triggerCharacters.includes('"');
+        this.completionProvider?.dispose();
+        this.completionProvider = undefined;
         this.completionProvider = languages.registerCompletionItemProvider(
             this.monacoLanguage,
             this,
@@ -506,15 +500,8 @@ export class KernelCompletionProvider extends DisposableBase implements IExtensi
                     void e.session.kernel.requestComplete({ code: '__file__.', cursor_pos: 9 });
                 }
 
-                const experiment = ServiceContainer.instance.get<IExperimentService>(IExperimentService);
                 const language = getKernelLanguageAsMonacoLanguage(e);
                 if (!language) {
-                    return;
-                }
-                if (
-                    !experiment.inExperiment(Experiments.KernelCompletions) &&
-                    language.toLowerCase() !== PYTHON_LANGUAGE.toLowerCase()
-                ) {
                     return;
                 }
                 if (this.kernelCompletionProviders.has(e)) {
@@ -592,7 +579,7 @@ function logHowToEnableKernelCompletion(kernel: IKernel) {
     const kernelLanguage = getKernelLanguage(kernel);
     const monacoLanguage = getKernelLanguageAsMonacoLanguage(kernel);
     if (kernelLanguage.toLowerCase() === monacoLanguage.toLowerCase()) {
-        traceWarning(
+        logger.warn(
             l10n.t(
                 `Kernel completions not enabled for '{0}'. \nTo enable Kernel completion for this language please add the following setting \njupyter.completionTriggerCharacters = {1}: [<List of characters that will trigger completions>]}. \nFor more information please see https://aka.ms/vscodeJupyterCompletion`,
                 getDisplayNameOrNameOfKernelConnection(kernel.kernelConnectionMetadata),
@@ -600,7 +587,7 @@ function logHowToEnableKernelCompletion(kernel: IKernel) {
             )
         );
     } else {
-        traceWarning(
+        logger.warn(
             l10n.t(
                 `Kernel completions not enabled for '{0}'. \nTo enable Kernel completion for this language please add the following setting \njupyter.completionTriggerCharacters = {1}: [<List of characters that will trigger completions>]}. \n or the following: \njupyter.completionTriggerCharacters = {2}: [<List of characters that will trigger completions>]}. \nFor more information please see https://aka.ms/vscodeJupyterCompletion`,
                 getDisplayNameOrNameOfKernelConnection(kernel.kernelConnectionMetadata),
@@ -649,7 +636,7 @@ export function generatePythonCompletions(
         allowStringFilter &&
         (triggerCharacter == "'" || triggerCharacter == '"' || positionInsideString(line, position));
 
-    traceInfoIfCI(`Jupyter completions filtering applied: ${insideString} on ${line}`);
+    logger.ci(`Jupyter completions filtering applied: ${insideString} on ${line}`);
 
     // Update magics to have a much lower sort order than other strings.
     // Also change things that start with our current word to eliminate the
@@ -744,13 +731,13 @@ export function generatePythonCompletions(
         })
         .filter((r) => r !== undefined) as CompletionItem[];
 
-    traceInfoIfCI(
+    logger.ci(
         `Jupyter completions for ${word} at pos ${position.line}:${
             position.character
         } with trigger: ${triggerCharacter}\n   ${completions.map((r) => r.label).join(',')}`
     );
 
-    traceInfoIfCI(
+    logger.ci(
         `Jupyter results for ${word} at pos ${position.line}:${
             position.character
         } with trigger: ${triggerCharacter}\n   ${result.map((r) => r.label).join(',')}`

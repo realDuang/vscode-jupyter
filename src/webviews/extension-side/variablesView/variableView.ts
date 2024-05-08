@@ -15,7 +15,7 @@ import {
 } from '../../../kernels/variables/types';
 import { IWebviewViewProvider } from '../../../platform/common/application/types';
 import { ContextKey } from '../../../platform/common/contextKey';
-import { traceError } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import {
     Resource,
     IConfigurationService,
@@ -63,7 +63,7 @@ export class VariableView extends WebviewViewHost<IVariableViewPanelMapping> imp
 
     @capturePerfTelemetry(Telemetry.NativeVariableViewLoaded)
     public async load(codeWebview: vscodeWebviewView) {
-        await super.loadWebview(Uri.file(process.cwd()), codeWebview).catch(traceError);
+        await super.loadWebview(Uri.file(process.cwd()), codeWebview).catch(logger.error);
 
         // After loading, hook up our visibility watch and check the initial visibility
         if (this.webviewView) {
@@ -137,11 +137,9 @@ export class VariableView extends WebviewViewHost<IVariableViewPanelMapping> imp
     // Handle a request from the react UI to show our data viewer. Public for testing
     @swallowExceptions()
     public async showDataViewer(request: IShowDataViewer) {
+        request.variable.fileName = request.variable.fileName ?? this.notebookWatcher.activeKernel?.notebook.uri;
         try {
-            if (
-                this.experiments.inExperiment(Experiments.DataViewerContribution) &&
-                !request.variable.fileName?.path.endsWith('.interactive')
-            ) {
+            if (this.experiments.inExperiment(Experiments.DataViewerContribution)) {
                 // jupyterVariableViewers
                 const variableViewers = this.getMatchingVariableViewers(request.variable);
                 if (variableViewers.length === 0) {
@@ -185,7 +183,7 @@ export class VariableView extends WebviewViewHost<IVariableViewPanelMapping> imp
                 return commands.executeCommand(Commands.ShowDataViewer, request.variable);
             }
         } catch (e) {
-            traceError(e);
+            logger.error(e);
             sendTelemetryEvent(Telemetry.FailedShowDataViewer);
             window.showErrorMessage(localize.DataScience.showDataViewerFail).then(noop, noop);
         }
