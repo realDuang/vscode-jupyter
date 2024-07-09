@@ -121,6 +121,7 @@ export class InteractiveWindowProvider implements IInteractiveWindowProvider, IE
                 tab,
                 Uri.parse(iw.inputBoxUriString)
             );
+
             result.notifyConnectionReset();
 
             this._windows.push(result);
