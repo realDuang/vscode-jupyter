@@ -1,7 +1,7 @@
 {
     "name": "jupyter",
     "displayName": "Jupyter",
-    "version": "2024.6.0",
+    "version": "2024.8.0",
     "description": "Jupyter notebook support, interactive programming and computing that supports Intellisense, debugging and more.",
     "publisher": "ms-toolsai",
     "author": {
@@ -29,7 +29,7 @@
         "theme": "light"
     },
     "engines": {
-        "vscode": "^1.91.0"
+        "vscode": "^1.92.0"
     },
     "l10n": "./l10n",
     "extensionKind": [
@@ -2247,7 +2247,7 @@
         "@vscode/dts": "^0.4.0",
         "@vscode/test-cli": "^0.0.8",
         "@vscode/test-electron": "^2.3.9",
-        "@vscode/test-web": "^0.0.50",
+        "@vscode/test-web": "^0.0.56",
         "@vscode/zeromq": "^0.2.1",
         "acorn": "^8.9.0",
         "babel-polyfill": "^6.26.0",
