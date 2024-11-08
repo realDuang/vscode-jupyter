@@ -68,6 +68,7 @@ import {
     postActivateLegacy
 } from './extension.common';
 import { activateNotebookTelemetry } from './kernels/telemetry/notebookTelemetry';
+import { deleteOldTempDirs } from './platform/common/temp.node';
 
 durations.codeLoadingTime = stopWatch.elapsedTime;
 
@@ -82,7 +83,7 @@ let activatedServiceContainer: IServiceContainer | undefined;
 
 export async function activate(context: IExtensionContext): Promise<IExtensionApi> {
     durations.startActivateTime = stopWatch.elapsedTime;
-    const standardOutputChannel = initializeLoggers(context, {
+    const standardOutputChannel = await initializeLoggers(context, {
         addConsoleLogger: !!process.env.VSC_JUPYTER_FORCE_LOGGING,
         userNameRegEx: tryGetUsername(),
         homePathRegEx: tryGetHomePath(),
@@ -103,6 +104,7 @@ export async function activate(context: IExtensionContext): Promise<IExtensionAp
         // Otherwise Telemetry is send via the error handler.
         durations.endActivateTime = stopWatch.elapsedTime;
         sendStartupTelemetry(durations, stopWatch);
+        deleteOldTempDirs(context).catch(noop);
         return api;
     } catch (ex) {
         // We want to completely handle the error

@@ -9,35 +9,7 @@ const path = require('path');
 const constants = require('../constants');
 const common = require('../webpack/common');
 const { downloadZMQ } = require('@vscode/zeromq');
-/**
- * In order to get raw kernels working, we reuse the default kernel that jupyterlab ships.
- * However it expects to be talking to a websocket which is serializing the messages to strings.
- * Our raw kernel is not a web socket and needs to do its own serialization. To do so, we make a copy
- * of the default kernel with the serialization stripped out. This is simpler than making a copy of the module
- * at runtime.
- */
-function createJupyterKernelWithoutSerialization() {
-    var relativePath = path.join('node_modules', '@jupyterlab', 'services', 'lib', 'kernel', 'default.js');
-    var filePath = path.join(constants.ExtensionRootDir, relativePath);
-    if (!fs.existsSync(filePath)) {
-        throw new Error(
-            "Jupyter lab default kernel not found '" + filePath + "' (Jupyter Extension post install script)"
-        );
-    }
-    var fileContents = fs.readFileSync(filePath, { encoding: 'utf8' });
-    var replacedContents = fileContents
-        .replace(/^const serialize =.*$/gm, 'const serialize = { serialize: (a) => a, deserialize: (a) => a };')
-        .replace(
-            'const owned = team.session === this.clientId;',
-            'const owned = parentHeader.session === this.clientId;'
-        );
-    if (replacedContents === fileContents) {
-        throw new Error('Jupyter lab default kernel cannot be made non serializing');
-    }
-    var destPath = path.join(path.dirname(filePath), 'nonSerializingKernel.js');
-    fs.writeFileSync(destPath, replacedContents);
-    console.log(colors.green(destPath + ' file generated (by Jupyter VSC)'));
-}
+
 function fixVariableNameInKernelDefaultJs() {
     var relativePath = path.join('node_modules', '@jupyterlab', 'services', 'lib', 'kernel', 'default.js');
     var filePath = path.join(constants.ExtensionRootDir, relativePath);
@@ -74,34 +46,6 @@ function removeUnnecessaryLoggingFromKernelDefault() {
     }
     fs.writeFileSync(filePath, replacedContents);
     console.log(colors.green(filePath + ' file updated (by Jupyter VSC)'));
-}
-
-/**
- * Fix compilation issues in jsdom files.
- */
-function updateJSDomTypeDefinition() {
-    var relativePath = path.join('node_modules', '@types', 'jsdom', 'base.d.ts');
-    var filePath = path.join(constants.ExtensionRootDir, relativePath);
-    if (!fs.existsSync(filePath)) {
-        console.warn("JSdom base.d.ts not found '" + filePath + "' (Jupyter Extension post install script)");
-        return;
-    }
-    var fileContents = fs.readFileSync(filePath, { encoding: 'utf8' });
-    var replacedContents = fileContents.replace(
-        /\s*globalThis: DOMWindow;\s*readonly \["Infinity"]: number;\s*readonly \["NaN"]: number;/g,
-        [
-            'globalThis: DOMWindow;',
-            '// @ts-ignore',
-            'readonly ["Infinity"]: number;',
-            '// @ts-ignore',
-            'readonly ["NaN"]: number;'
-        ].join(`${EOL}        `)
-    );
-    if (replacedContents === fileContents) {
-        console.warn('JSdom base.d.ts not updated');
-        return;
-    }
-    fs.writeFileSync(filePath, replacedContents);
 }
 
 /**
@@ -256,10 +200,8 @@ function commentOutInvalidExport() {
 
 fixJupyterLabRenderers();
 makeVariableExplorerAlwaysSorted();
-createJupyterKernelWithoutSerialization();
 fixVariableNameInKernelDefaultJs();
 removeUnnecessaryLoggingFromKernelDefault();
-updateJSDomTypeDefinition();
 fixStripComments();
 verifyMomentIsOnlyUsedByJupyterLabCoreUtils();
 ensureOrigNBFormatIsOptional();

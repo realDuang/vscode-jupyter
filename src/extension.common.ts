@@ -47,8 +47,9 @@ import { StopWatch } from './platform/common/utils/stopWatch';
 import { sendTelemetryEvent } from './telemetry';
 import { IExtensionActivationManager } from './platform/activation/types';
 import { getVSCodeChannel } from './platform/common/application/applicationEnvironment';
+import { getExtensionTempDir } from './platform/common/temp';
 
-export function initializeLoggers(
+export async function initializeLoggers(
     context: IExtensionContext,
     options: {
         addConsoleLogger: boolean;
@@ -82,6 +83,7 @@ export function initializeLoggers(
     if (options?.platform) {
         standardOutputChannel.appendLine(`Platform: ${options.platform} (${options.arch}).`);
     }
+    standardOutputChannel.appendLine(`Temp Storage folder ${getDisplayPath(await getExtensionTempDir(context))}`);
     if (!workspace.workspaceFolders || workspace.workspaceFolders.length === 0) {
         standardOutputChannel.appendLine(`No workspace folder opened.`);
     } else if (workspace.workspaceFolders.length === 1) {

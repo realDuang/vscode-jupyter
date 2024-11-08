@@ -3,20 +3,15 @@
 
 import { inject, injectable, optional } from 'inversify';
 import * as vscode from 'vscode';
-
 import { IDebugService } from '../../platform/common/application/types';
-import { ContextKey } from '../../platform/common/contextKey';
 import { dispose } from '../../platform/common/utils/lifecycle';
-
 import { IConfigurationService, IDisposable, IDisposableRegistry } from '../../platform/common/types';
-import { noop } from '../../platform/common/utils/misc';
 import { StopWatch } from '../../platform/common/utils/stopWatch';
 import { IServiceContainer } from '../../platform/ioc/types';
 import { sendTelemetryEvent } from '../../telemetry';
 import { logger } from '../../platform/logging';
 import {
     CodeLensCommands,
-    EditorContexts,
     InteractiveInputScheme,
     NotebookCellScheme,
     Telemetry
@@ -65,6 +60,7 @@ export class DataScienceCodeLensProvider implements IDataScienceCodeLensProvider
                 duration: this.totalExecutionTimeInMs / this.totalGetCodeLensCalls
             });
         }
+
         dispose(this.activeCodeWatchers);
     }
 
@@ -108,12 +104,6 @@ export class DataScienceCodeLensProvider implements IDataScienceCodeLensProvider
         const codeLenses = this.getCodeLens(document);
         this.totalExecutionTimeInMs += stopWatch.elapsedTime;
         this.totalGetCodeLensCalls += 1;
-
-        // Update the hasCodeCells context at the same time we are asked for codelens as VS code will
-        // ask whenever a change occurs. Do this regardless of if we have code lens turned on or not as
-        // shift+enter relies on this code context.
-        const editorContext = new ContextKey(EditorContexts.HasCodeCells);
-        editorContext.set(codeLenses && codeLenses.length > 0).catch(noop);
 
         // Don't provide any code lenses if we have not enabled data science
         const settings = this.configuration.getSettings(document.uri);

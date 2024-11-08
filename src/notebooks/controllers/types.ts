@@ -14,6 +14,7 @@ import { JupyterNotebookView, InteractiveWindowView } from '../../platform/commo
 import { IDisposable } from '../../platform/common/types';
 import { JupyterServerCollection } from '../../api';
 import { EnvironmentPath } from '@vscode/python-extension';
+import type { VSCodeNotebookController } from './vscodeNotebookController';
 
 export const InteractiveControllerIdSuffix = ' (Interactive)';
 
@@ -23,13 +24,10 @@ export interface IVSCodeNotebookController extends IDisposable {
     readonly id: string;
     readonly label: string;
     readonly viewType: typeof JupyterNotebookView | typeof InteractiveWindowView;
-    readonly onNotebookControllerSelected: vscode.Event<{
-        notebook: vscode.NotebookDocument;
-        controller: IVSCodeNotebookController;
-    }>;
     readonly onNotebookControllerSelectionChanged: vscode.Event<{
         selected: boolean;
         notebook: vscode.NotebookDocument;
+        controller: VSCodeNotebookController;
     }>;
     readonly onConnecting: vscode.Event<void>;
     readonly onDidDispose: vscode.Event<void>;
@@ -38,7 +36,6 @@ export interface IVSCodeNotebookController extends IDisposable {
     postMessage(message: any, editor?: vscode.NotebookEditor): Thenable<boolean>;
     asWebviewUri(localResource: vscode.Uri): vscode.Uri;
     isAssociatedWithDocument(notebook: vscode.NotebookDocument): boolean;
-    restoreConnection(notebook: vscode.NotebookDocument): Promise<void>;
     updateConnection(connection: KernelConnectionMetadata): void;
     setPendingCellAddition(notebook: vscode.NotebookDocument, promise: Promise<void>): void;
 }
@@ -99,7 +96,6 @@ export interface IControllerRegistration {
      * Event fired when controllers are added or removed
      */
     onDidChange: vscode.Event<IVSCodeNotebookControllerUpdateEvent>;
-    isFiltered(metadata: KernelConnectionMetadata): boolean;
 }
 
 // Flag enum for the reason why a kernel was logged as an exact match

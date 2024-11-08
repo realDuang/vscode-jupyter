@@ -19,8 +19,6 @@ import { dispose } from '../../platform/common/utils/lifecycle';
 export interface IJupyterPasswordConnectInfo {
     requiresPassword: boolean;
     requestHeaders?: Record<string, string>;
-    remappedBaseUrl?: string;
-    remappedToken?: string;
 }
 
 /**
@@ -331,8 +329,11 @@ export class JupyterPasswordConnect {
 
             // Session cookie is the first one
             if (cookies.size > 0) {
-                sessionCookieName = cookies.entries().next().value[0];
-                sessionCookieValue = cookies.entries().next().value[1];
+                const cookie = cookies.entries().next().value;
+                if (cookie) {
+                    sessionCookieName = cookie[0];
+                    sessionCookieValue = cookie[1];
+                }
             }
         }
 

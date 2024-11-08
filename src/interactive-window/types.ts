@@ -1,21 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import {
-    Disposable,
-    Event,
-    NotebookCell,
-    NotebookController,
-    NotebookDocument,
-    NotebookEditor,
-    Tab,
-    Uri
-} from 'vscode';
+import { Disposable, Event, NotebookCell, NotebookController, NotebookDocument, NotebookEditor, Uri } from 'vscode';
 import { IDebuggingManager } from '../notebooks/debugger/debuggingTypes';
 import { IKernel, KernelConnectionMetadata } from '../kernels/types';
 import { Resource, InteractiveWindowMode } from '../platform/common/types';
 import { IFileGeneratedCodes } from './editor-integration/types';
 import { IVSCodeNotebookController } from '../notebooks/controllers/types';
+import { InteractiveWindowView, JupyterNotebookView } from '../platform/common/constants';
 
 export type INativeInteractiveWindow = { notebookUri: Uri; inputUri: Uri; notebookEditor: NotebookEditor };
 
@@ -71,6 +63,7 @@ export interface IInteractiveControllerHelper {
     }>;
     getInitialController(
         resource: Resource,
+        viewType: IwViewType,
         connection?: KernelConnectionMetadata
     ): Promise<IVSCodeNotebookController | undefined>;
     getSelectedController(notebookDocument: NotebookDocument): IVSCodeNotebookController | undefined;
@@ -83,6 +76,8 @@ export interface IInteractiveControllerHelper {
         disposables: Disposable[]
     ): Promise<{ kernel: IKernel; actualController: NotebookController }>;
 }
+
+export type IwViewType = typeof JupyterNotebookView | typeof InteractiveWindowView;
 
 export interface IInteractiveBase extends Disposable {
     hasCell(id: string): Promise<boolean>;
@@ -111,15 +106,6 @@ export interface IInteractiveWindowCache {
     mode: InteractiveWindowMode;
     uriString: string;
     inputBoxUriString: string;
-}
-
-export interface TabInputInteractiveWindow {
-    readonly uri: Uri;
-    readonly inputBoxUri: Uri;
-}
-
-export interface InteractiveTab extends Tab {
-    readonly input: TabInputInteractiveWindow;
 }
 
 export const IInteractiveWindowDebuggingManager = Symbol('IInteractiveWindowDebuggingManager');

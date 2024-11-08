@@ -49,9 +49,8 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
         private readonly jupyterVariableDataProviderFactory: IJupyterVariableDataProviderFactory | undefined,
         @inject(IDataViewerFactory) @optional() private readonly dataViewerFactory: IDataViewerFactory | undefined,
         @inject(IJupyterVariables)
-        @optional()
         @named(Identifiers.DEBUGGER_VARIABLES)
-        private variableProvider: IJupyterVariables | undefined,
+        private variableProvider: IJupyterVariables,
         @inject(IDataScienceErrorHandler) private readonly errorHandler: IDataScienceErrorHandler,
         @inject(IDataViewerDependencyService)
         @optional()
@@ -91,9 +90,14 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
     private async delegateDataViewer(request: IJupyterVariable | IShowDataViewerFromVariablePanel) {
         const variable = 'variable' in request ? await this.getVariableFromRequest(request) : request;
         if (!variable) {
+            logger.error('Variable info could not be retreived');
+            sendTelemetryEvent(Telemetry.FailedShowDataViewer, undefined, {
+                reason: 'no variable info',
+                fromVariableView: false
+            });
             return;
         }
-        return this.dataViewerDelegator.showContributedDataViewer(variable);
+        return this.dataViewerDelegator.showContributedDataViewer(variable, false);
     }
 
     // get the information needed about the request from the debug variable view
@@ -102,7 +106,13 @@ export class DataViewerCommandRegistry implements IExtensionSyncActivationServic
             const variable = convertDebugProtocolVariableToIJupyterVariable(
                 request.variable as unknown as DebugProtocol.Variable
             );
-            return this.variableProvider.getFullVariable(variable);
+            try {
+                const result = await this.variableProvider.getFullVariable(variable);
+                return result;
+            } catch (e) {
+                logger.warn('Full variable info could not be retreived, will attempt with partial info.', e);
+                return variable;
+            }
         }
     }
 

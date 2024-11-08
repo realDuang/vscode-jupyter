@@ -31,7 +31,12 @@ import { StopWatch } from '../../../platform/common/utils/stopWatch';
 import { Deferred, createDeferred, sleep } from '../../../platform/common/utils/async';
 import { once } from '../../../platform/common/utils/events';
 import { logger } from '../../../platform/logging';
-import { JVSC_EXTENSION_ID, POWER_TOYS_EXTENSION_ID, PYTHON_LANGUAGE } from '../../../platform/common/constants';
+import {
+    DATA_WRANGLER_EXTENSION_ID,
+    JVSC_EXTENSION_ID,
+    POWER_TOYS_EXTENSION_ID,
+    PYTHON_LANGUAGE
+} from '../../../platform/common/constants';
 import { ChatMime, generatePythonCodeToInvokeCallback } from '../../../kernels/chat/generator';
 import {
     isDisplayIdTrackedForExtension,
@@ -169,6 +174,20 @@ class KernelExecutionProgressIndicator {
 }
 
 /**
+ * Error to be throw to to notify calls of the API that access to the API has been revoked by the user.
+ */
+class KernelAPIAccessRevoked extends Error {
+    constructor() {
+        super(l10n.t('Access to Jupyter Kernel has been revoked'));
+        // WARNING: This name should never be changed as extensions can rely on this.
+        // Do not expose as a constant either, at least not yet
+        // Lets try this approach for now and see if there can be a better approach.
+        // Note: Same approach used in notebook renderer fallbacks.
+        this.name = 'vscode.jupyter.apiAccessRevoked';
+    }
+}
+
+/**
  * Design guidelines for separate kernel per extension.
  * Assume extension A & B use the same kernel and use this API.
  * Both can send code and so can the user via a notebook/iw.
@@ -244,7 +263,7 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
             },
             onDidChangeStatus: that.onDidChangeStatus.bind(this),
             get onDidReceiveDisplayUpdate() {
-                if (![JVSC_EXTENSION_ID, POWER_TOYS_EXTENSION_ID].includes(extensionId)) {
+                if (![JVSC_EXTENSION_ID, POWER_TOYS_EXTENSION_ID, DATA_WRANGLER_EXTENSION_ID].includes(extensionId)) {
                     throw new Error(`Proposed API is not supported for extension ${extensionId}`);
                 }
 
@@ -279,7 +298,7 @@ class WrappedKernelPerExtension extends DisposableBase implements Kernel {
         }
         const accessAllowed = await this.accessAllowed;
         if (!accessAllowed) {
-            throw new Error(l10n.t('Access to Jupyter Kernel has been revoked'));
+            throw new KernelAPIAccessRevoked();
         }
     }
 

@@ -4,6 +4,7 @@
 import { ChildProcess } from 'child_process';
 import { kill } from 'process';
 import * as fs from 'fs-extra';
+import * as crypto from 'crypto';
 import * as os from 'os';
 import * as path from '../../../platform/vscode-path/path';
 import { CancellationError, CancellationToken, Event, EventEmitter, Uri } from 'vscode';
@@ -34,7 +35,8 @@ import {
     IOutputChannel,
     IJupyterSettings,
     IExperimentService,
-    Experiments
+    Experiments,
+    type ReadWrite
 } from '../../../platform/common/types';
 import { createDeferred, raceTimeout } from '../../../platform/common/utils/async';
 import { DataScience } from '../../../platform/common/utils/localize';
@@ -71,6 +73,16 @@ export const kernelOutputToNotLog = [
     'Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION'
 ];
 
+export class TcpPortUsage {
+    public static async waitUntilFree(port: number, retryTimeMs: number, timeOutMs: number): Promise<void> {
+        const tcpPortUsed = (await import('tcp-port-used')).default;
+        await tcpPortUsed.waitUntilFree(port, retryTimeMs, timeOutMs);
+    }
+    public static async waitUntilUsed(port: number, retryTimeMs: number, timeOutMs: number): Promise<void> {
+        const tcpPortUsed = (await import('tcp-port-used')).default;
+        await tcpPortUsed.waitUntilUsed(port, retryTimeMs, timeOutMs);
+    }
+}
 // Launches and disposes a kernel process given a kernelspec and a resource or python interpreter.
 // Exposes connection information and the process itself.
 export class KernelProcess extends ObservableDisposable implements IKernelProcess {
@@ -106,7 +118,7 @@ export class KernelProcess extends ObservableDisposable implements IKernelProces
     private exitEvent = new EventEmitter<{ exitCode?: number; reason?: string; stderr: string }>();
     private launchedOnce?: boolean;
     private connectionFile?: Uri;
-    private _launchKernelSpec?: IJupyterKernelSpec;
+    private _launchKernelSpec?: ReadWrite<IJupyterKernelSpec>;
     private interrupter?: Interrupter;
     private exitEventFired = false;
     private readonly _kernelConnectionMetadata: Readonly<
@@ -262,7 +274,6 @@ export class KernelProcess extends ObservableDisposable implements IKernelProces
                 .get<IExperimentService>(IExperimentService)
                 .inExperiment(Experiments.DoNotWaitForZmqPortsToBeUsed);
 
-            const tcpPortUsed = (await import('tcp-port-used')).default;
             const stopwatch = new StopWatch();
 
             // Wait on shell port as this is used for communications (hence shell port is guaranteed to be used, where as heart beat isn't).
@@ -277,8 +288,8 @@ export class KernelProcess extends ObservableDisposable implements IKernelProces
             const portsUsed = doNotWaitForZmqPortsToGetUsed
                 ? Promise.resolve()
                 : Promise.all([
-                      tcpPortUsed.waitUntilUsed(this.connection.shell_port, 200, timeout),
-                      tcpPortUsed.waitUntilUsed(this.connection.iopub_port, 200, timeout)
+                      TcpPortUsage.waitUntilUsed(this.connection.shell_port, 200, timeout),
+                      TcpPortUsage.waitUntilUsed(this.connection.iopub_port, 200, timeout)
                   ]).catch((ex) => {
                       if (cancelToken.isCancellationRequested || deferred.rejected) {
                           return;
@@ -447,7 +458,10 @@ export class KernelProcess extends ObservableDisposable implements IKernelProces
             );
         }
 
-        this.connectionFile = await this.createConnectionFile();
+        const runtimeDir = await this.jupyterPaths.getRuntimeDir();
+        const connectionFileName = `kernel-v3${crypto.randomBytes(20).toString('hex')}.json`;
+        this.connectionFile = Uri.joinPath(runtimeDir, connectionFileName);
+
         // Python kernels are special. Handle the extra arguments.
         if (this.isPythonKernel) {
             // Slice out -f and the connection file from the args
@@ -485,22 +499,6 @@ export class KernelProcess extends ObservableDisposable implements IKernelProces
                 ].replace(connectionFilePlaceholder, this.connectionFile.fsPath);
             }
         }
-    }
-    private async createConnectionFile() {
-        const runtimeDir = await this.jupyterPaths.getRuntimeDir();
-        const tempFile = await this.fileSystem.createTemporaryLocalFile({
-            fileExtension: '.json',
-            prefix: 'kernel-v2-'
-        });
-        // Note: We have to dispose the temp file and recreate it else the file
-        // system will hold onto the file with an open handle. THis doesn't work so well when
-        // a different process tries to open it.
-        const connectionFile = runtimeDir
-            ? path.join(runtimeDir.fsPath, path.basename(tempFile.filePath))
-            : tempFile.filePath;
-        // Ensure we dispose this, and don't maintain a handle on this file.
-        await tempFile.dispose(); // Do not remove this line.
-        return Uri.file(connectionFile);
     }
     // Add the command line arguments
     private addPythonConnectionArgs(connectionFile: Uri): string[] {

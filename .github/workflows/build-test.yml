@@ -27,8 +27,8 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: 18.15.0
-  NPM_VERSION: 9.5.0
+  NODE_VERSION: 20.17.0
+  NPM_VERSION: 10.8.2
   PYTHON_VERSION: 3.8
   DENO_VERSION: '~1.37'
   MOCHA_REPORTER_JUNIT: true # Use the mocha-multi-reporters and send output to both console (spec) and JUnit (mocha-junit-reporter). Also enables a reporter which exits the process running the tests if it haven't already.
@@ -40,7 +40,6 @@ env:
   VSC_JUPYTER_CI_RUN_NON_PYTHON_NB_TEST: 'true'
   # Key for the cache created at the end of the the 'Cache ./pythonFiles/lib/python' step.
   CACHE_PYTHONFILES: cache-pvsc-pythonFiles
-  COVERAGE_REPORTS: tests-coverage-reports
   TEST_RESULTS_DIRECTORY: .
   TEST_RESULTS_GLOB: '**/test-results*.xml'
   IPYWIDGET_SCREENSHOT_PATH: '*-screenshot.png'
@@ -54,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.12.0
+        uses: styfle/cancel-workflow-action@0.12.1
         with:
           access_token: ${{ github.token }}
 
@@ -253,18 +252,6 @@ jobs:
       - name: Verify there are no unhandled errors
         run: npm run verifyUnhandledErrors
 
-      - name: Create coverage folder (if not created)
-        run: npm run createNycFolder
-
-      # Upload unit test coverage reports for later use in the "reports" job.
-      - name: Upload unit test coverage reports
-        uses: actions/upload-artifact@v3
-        if: "(success() || failure()) && !contains(github.ref, 'refs/heads/release') && github.event_name != 'pull_request'"
-        with:
-          name: ${{env.COVERAGE_REPORTS}}-${{runner.os}}
-          path: .nyc_output
-          retention-days: 1
-
   vscodeTests:
     name: Tests # These tests run with Python extension & real Jupyter
     runs-on: ${{ matrix.os }}
@@ -313,13 +300,13 @@ jobs:
             tags: '^[^@]+$|@mandatory'
             os: ubuntu-latest
             ipywidgetsVersion: ''
-          - jupyterConnection: remote
-            python: python
-            pythonVersion: '3.10'
-            packageVersion: 'prerelease'
-            tags: '^[^@]+$|@mandatory'
-            os: ubuntu-latest
-            ipywidgetsVersion: ''
+          #   - jupyterConnection: remote
+          #     python: python
+          #     pythonVersion: '3.10'
+          #     packageVersion: 'prerelease'
+          #     tags: '^[^@]+$|@mandatory'
+          #     os: ubuntu-latest
+          #     ipywidgetsVersion: ''
           - jupyterConnection: web
             python: python
             pythonVersion: '3.10'
@@ -353,13 +340,13 @@ jobs:
             os: ubuntu-latest
             ipywidgetsVersion: ''
           # Pre-Release Versions
-          - jupyterConnection: raw
-            python: python
-            pythonVersion: '3.10'
-            packageVersion: 'prerelease'
-            tags: '^[^@]+$|@mandatory|@kernelCore|@python|@jupyter'
-            os: ubuntu-latest
-            ipywidgetsVersion: ''
+          #   - jupyterConnection: raw
+          #     python: python
+          #     pythonVersion: '3.10'
+          #     packageVersion: 'prerelease'
+          #     tags: '^[^@]+$|@mandatory|@kernelCore|@python|@jupyter'
+          #     os: ubuntu-latest
+          #     ipywidgetsVersion: ''
           # Without Python
           - jupyterConnection: raw
             python: noPython
@@ -394,13 +381,13 @@ jobs:
           python-version: ${{matrix.pythonVersion}}
 
       - name: Install Conda environment from environment.yml
-        uses: mamba-org/provision-with-micromamba@3c96c0c27676490c63c18bc81f5c51895ac3e0e6
+        uses: mamba-org/setup-micromamba@v2
         if: matrix.python == 'conda'
         with:
           cache-downloads: true
           environment-name: functional_test_env
           environment-file: ./build/conda-test-requirements.yml
-          extra-specs: |
+          create-args: |
             python=${{matrix.pythonVersion}}
 
       - name: Set CI Path
@@ -608,7 +595,7 @@ jobs:
       # Used by tests for non-python kernels.
       # Test are enabled via env variable `VSC_JUPYTER_CI_RUN_NON_PYTHON_NB_TEST`
       - name: Install Deno
-        uses: denoland/setup-deno@v1
+        uses: denoland/setup-deno@v2
         if: matrix.tags != '@notebookPerformance'
         with:
           deno-version: ${{ env.DENO_VERSION}}
@@ -760,18 +747,6 @@ jobs:
         id: test_notebookWithoutPythonExt_vscode
         if: matrix.python == 'noPython' && matrix.os != 'windows-latest'
 
-      - name: Create coverage folder (if not created)
-        run: npm run createNycFolder
-
-      # Upload unit test coverage reports for later use in the "reports" job.
-      - name: Upload unit test coverage reports
-        uses: actions/upload-artifact@v3
-        if: "(success() || failure()) && !contains(github.ref, 'refs/heads/release') && github.event_name != 'pull_request'"
-        with:
-          name: ${{env.COVERAGE_REPORTS}}-${{runner.os}}
-          path: .nyc_output
-          retention-days: 1
-
       - name: Upload VS code logs
         uses: actions/upload-artifact@v3
         if: failure()
@@ -865,70 +840,3 @@ jobs:
         uses: GabrielBB/xvfb-action@v1.4
         with:
           run: npm run testSmokeLogged
-
-  coverage:
-    name: Coverage reports upload
-    runs-on: ubuntu-latest
-    if: "(success() || failure()) && !contains(github.ref, 'refs/heads/release') && github.event_name != 'pull_request'"
-    needs: [ts_tests, vscodeTests]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{env.NODE_VERSION}}
-
-      - name: npm ci
-        uses: ./.github/actions/npm-ci
-
-      - name: Cache compiled TS files
-        id: out-cache
-        uses: actions/cache@v4
-        with:
-          path: ./out
-          key: ${{runner.os}}-${{env.CACHE_OUT_DIRECTORY}}-${{hashFiles('src/**')}}
-
-      - name: Compile if not cached
-        run: npm run prePublishNonBundle
-        if: steps.out-cache.outputs.cache-hit != 'true'
-
-      # It isn't possible to specify a regex for artifact names, so we have to download each artifact manually.
-      # The name pattern is ${{env.COVERAGE_REPORTS}}-${{runner.os}}, and possible values for runner.os are `Linux`, `Windows`, or `macOS`.
-      # See https://help.github.com/en/actions/reference/contexts-and-expression-syntax-for-github-actions#runner-context
-      - name: Download Ubuntu test coverage artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: ${{env.COVERAGE_REPORTS}}-${{runner.os}}
-          path: ${{env.COVERAGE_REPORTS}}-${{runner.os}}
-
-      - name: Extract Ubuntu coverage artifacts to ./nyc_output
-        run: |
-          pwd
-          mkdir .nyc_output
-          mv ${{env.COVERAGE_REPORTS}}-${{runner.os}}/* .nyc_output
-          rm -r ${{env.COVERAGE_REPORTS}}-${{runner.os}}
-
-      - name: Merge coverage reports
-        run: |
-          pwd
-          npx nyc merge ./.nyc_output
-          rm -r .nyc_output
-          mkdir .nyc_output
-          mv coverage.json ./.nyc_output
-        continue-on-error: true
-
-      - name: Generate coverage reports
-        run: npm run test:cover:report
-        continue-on-error: true
-
-      - name: Upload coverage to codecov
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage/cobertura-coverage.xml
-          path_to_write_report: ./coverage/codecov_report.txt
-      # Alternative method for uploading
-      # - name: Upload coverage to codecov
-      #  run: bash <(curl -s https://codecov.io/bash) -f ./coverage/cobertura-coverage.xml -v
